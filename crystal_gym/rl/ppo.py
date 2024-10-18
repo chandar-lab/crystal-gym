@@ -1,91 +1,96 @@
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppopy
 import os
+import wandb
 import random
 import time
 from dataclasses import dataclass
 
 import gymnasium as gym
+import dgl
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import tyro
 from torch.distributions.categorical import Categorical
-from crysrl.gym import CrystalGymEnv
+from crystal_gym.env import CrystalGymEnv
+import hydra
+from omegaconf import DictConfig, OmegaConf
+from functools import partial
 from torch.utils.tensorboard import SummaryWriter
 from crystal_design.agents import MEGNetRL
 
-@dataclass
-class Args:
-    exp_name: str = os.path.basename(__file__)[: -len(".py")]
-    """the name of this experiment"""
-    seed: int = 1
-    """seed of the experiment"""
-    torch_deterministic: bool = True
-    """if toggled, `torch.backends.cudnn.deterministic=False`"""
-    cuda: bool = True
-    """if toggled, cuda will be enabled by default"""
-    track: bool = True
-    """if toggled, this experiment will be tracked with Weights and Biases"""
-    wandb_project_name: str = "cleanRL"
-    """the wandb's project name"""
-    wandb_entity: str = None
-    """the entity (team) of wandb's project"""
-    capture_video: bool = False
-    """whether to capture videos of the agent performances (check out `videos` folder)"""
+# def args(cfg: DictConfig) -> None: 
+#     print(OmegaConf.to_yaml(cfg))
+#     # exp_name: str = os.path.basename(__file__)[: -len(".py")]
+#     # """the name of this expaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaeriment"""
+#     # seed: int = 1
+#     # """seed of the experiment"""
+#     # torch_deterministic: bool = True
+#     # """if toggled, `torch.backends.cudnn.deterministic=False`"""
+#     # cuda: bool = True
+#     # """if toggled, cuda will be enabled by default"""
+#     # track: bool = True
+#     # """if toggled, this experiment will be tracked with Weights and Biases"""
+#     # wandb_project_name: str = "PPO"
+#     # """the wandb's project name"""
+#     # wandb_entity: str = None
+#     # """the entity (team) of wandb's project"""
+#     # capture_video: bool = False
+#     # """whether to capture videos of the agent performances (check out `videos` folder)"""
 
-    # Algorithm specific arguments
-    env_id: str = "CartPole-v1"
-    """the id of the environment"""
-    total_timesteps: int = 500000
-    """total timesteps of the experiments"""
-    learning_rate: float = 2.5e-4
-    """the learning rate of the optimizer"""
-    num_envs: int = 4
-    """the number of parallel game environments"""
-    num_steps: int = 128
-    """the number of steps to run in each environment per policy rollout"""
-    anneal_lr: bool = True
-    """Toggle learning rate annealing for policy and value networks"""
-    gamma: float = 0.99
-    """the discount factor gamma"""
-    gae_lambda: float = 0.95
-    """the lambda for the general advantage estimation"""
-    num_minibatches: int = 4
-    """the number of mini-batches"""
-    update_epochs: int = 4
-    """the K epochs to update the policy"""
-    norm_adv: bool = True
-    """Toggles advantages normalization"""
-    clip_coef: float = 0.2
-    """the surrogate clipping coefficient"""
-    clip_vloss: bool = True
-    """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
-    ent_coef: float = 0.01
-    """coefficient of the entropy"""
-    vf_coef: float = 0.5
-    """coefficient of the value function"""
-    max_grad_norm: float = 0.5
-    """the maximum norm for the gradient clipping"""
-    target_kl: float = None
-    """the target KL divergence threshold"""
+#     # # Algorithm specific arguments
+#     # env_id: str = "CartPole-v1"
+#     # """the id of the environment"""
+#     # total_timesteps: int = 500000
+#     # """total timesteps of the experiments"""
+#     # learning_rate: float = 2.5e-4
+#     # """the learning rate of the optimizer"""
+#     # num_envs: int = 4
+#     # """the number of parallel game environments"""
+#     # num_steps: int = 128
+#     # """the number of steps to run in each environment per policy rollout"""
+#     # anneal_lr: bool = True
+#     # """Toggle learning rate annealing for policy and value networks"""
+#     # gamma: float = 0.99
+#     # """the discount factor gamma"""
+#     # gae_lambda: float = 0.95
+#     # """the lambda for the general advantage estimation"""
+#     # num_minibatches: int = 4
+#     # """the number of mini-batches"""
+#     # update_epochs: int = 4
+#     # """the K epochs to update the policy"""
+#     # norm_adv: bool = True
+#     # """Toggles advantages normalization"""
+#     # clip_coef: float = 0.2
+#     # """the surrogate clipping coefficient"""
+#     # clip_vloss: bool = True
+#     # """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
+#     # ent_coef: float = 0.01
+#     # """coefficient of the entropy"""
+#     # vf_coef: float = 0.5
+#     # """coefficient of the value function"""
+#     # max_grad_norm: float = 0.5
+#     # """the maximum norm for the gradient clipping"""
+#     # target_kl: float = None
+#     # """the target KL divergence threshold"""
 
-    # to be filled in runtime
-    batch_size: int = 0
-    """the batch size (computed in runtime)"""
-    minibatch_size: int = 0
-    """the mini-batch size (computed in runtime)"""
-    num_iterations: int = 0
-    """the number of iterations (computed in runtime)"""
+#     # # to be filled in runtime
+#     # batch_size: int = 0
+#     # """the batch size (computed in runtime)"""
+#     # minibatch_size: int = 0
+#     # """the mini-batch size (computed in runtime)"""
+#     # num_iterations: int = 0
+#     # """the number of iterations (computed in runtime)"""
 
 
-def make_env(env_id, idx, capture_video, run_name):
+def make_env(env_id, idx, capture_video, run_name, kwargs):
     def thunk():
         if capture_video and idx == 0:
             env = gym.make(env_id, render_mode="rgb_array")
             env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         else:
-            env = gym.make(env_id)
+            env = gym.make(env_id, kwargs = kwargs)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         return env
 
@@ -119,8 +124,10 @@ class Agent(nn.Module):
         elif type == 'MEGNetRL':
             # Check if special initialization is required for MEGNetRL
             self.critic = MEGNetRL(num_actions = envs.single_action_space.n, 
+                                   ntypes_state =  envs.single_action_space.n,
                                    critic = True)
-            self.actor = MEGNetRL(num_actions = envs.single_action_space.n)
+            self.actor = MEGNetRL(num_actions = envs.single_action_space.n,
+                                  ntypes_state =  envs.single_action_space.n)
         self.type = type
 
     def get_value(self, x):
@@ -137,24 +144,26 @@ class Agent(nn.Module):
         if action is None:
             action = probs.sample()
         return action, probs.log_prob(action), probs.entropy(), values
-        
-if __name__ == "__main__":
-    args = tyro.cli(Args)
-    args.batch_size = int(args.num_envs * args.num_steps)
-    args.minibatch_size = int(args.batch_size // args.num_minibatches)
-    args.num_iterations = args.total_timesteps // args.batch_size
-    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
-    if args.track:
-        import wandb
 
+
+
+@hydra.main(version_base = None, config_path="../config", config_name="ppo")
+def main(args: DictConfig) -> None:
+    # args = tyro.cli(Args)
+    batch_size = int(args.algo.num_envs * args.algo.num_steps)
+    minibatch_size = int(batch_size // args.algo.num_minibatches)
+    num_iterations = args.algo.total_timesteps // batch_size
+    run_name = f"{args.algo.env_id}__{args.exp.exp_name}__{args.exp.seed}__{int(time.time())}"
+    if args.exp.track:
         wandb.init(
-            project=args.wandb_project_name,
-            entity=args.wandb_entity,
+            project=args.wandb.wandb_project_name,
+            group=args.wandb.wandb_group,
             sync_tensorboard=True,
-            config=vars(args),
+            config=dict(args),
             name=run_name,
             monitor_gym=True,
             save_code=True,
+            mode=args.wandb.mode,
         )
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
@@ -163,12 +172,12 @@ if __name__ == "__main__":
     )
 
     # TRY NOT TO MODIFY: seeding
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.backends.cudnn.deterministic = args.torch_deterministic
+    random.seed(args.exp.seed)
+    np.random.seed(args.exp.seed)
+    torch.manual_seed(args.exp.seed)
+    torch.backends.cudnn.deterministic = args.exp.torch_deterministic
 
-    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() and args.exp.cuda else "cpu")
 
     
     # env setup  
@@ -177,38 +186,41 @@ if __name__ == "__main__":
     # )
 
     ## Output of SyncVectorEnv is a list of outputs from each environment --  check how to parallellize this. ; but check AsyncVectorEnv
-
-    envs = make_env(args.env_id, 0, args.capture_video, run_name)()
+    kwargs = {'env':dict(args.env), 'qe': dict(args.qe)}
+    kwargs['env']['run_name'] = run_name
+    envs = make_env(args.algo.env_id, 0, args.exp.capture_video, run_name, kwargs)()
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
     agent = Agent(envs, type = "MEGNetRL").to(device)
-    optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
+    optimizer = optim.Adam(agent.parameters(), lr=args.algo.learning_rate, eps=1e-5)
 
     # ALGO Logic: Storage setup
-    obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
-    actions = torch.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
-    logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    values = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    # obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
+    obs = []
+    actions = torch.zeros((args.algo.num_steps, args.algo.num_envs) + envs.single_action_space.shape).to(device)
+    logprobs = torch.zeros((args.algo.num_steps, args.algo.num_envs)).to(device)
+    rewards = torch.zeros((args.algo.num_steps, args.algo.num_envs)).to(device)
+    dones = torch.zeros((args.algo.num_steps, args.algo.num_envs)).to(device)
+    values = torch.zeros((args.algo.num_steps, args.algo.num_envs)).to(device)
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
-    next_obs, _ = envs.reset(seed=args.seed)
+    next_obs, _ = envs.reset(seed=args.exp.seed)
     next_obs = next_obs.to(device)
-    next_done = torch.zeros(args.num_envs).to(device)
+    next_done = torch.zeros(args.algo.num_envs).to(device)
 
-    for iteration in range(1, args.num_iterations + 1):
+    for iteration in range(1, num_iterations + 1):
         # Annealing the rate if instructed to do so.
-        if args.anneal_lr:
-            frac = 1.0 - (iteration - 1.0) / args.num_iterations
-            lrnow = frac * args.learning_rate
+        if args.algo.anneal_lr:
+            frac = 1.0 - (iteration - 1.0) / num_iterations
+            lrnow = frac * args.algo.learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
 
-        for step in range(0, args.num_steps):
-            global_step += args.num_envs
+        for step in range(0, args.algo.num_steps):
+            global_step += args.algo.num_envs
             # obs[step] = next_obs
+            obs.append(next_obs)
             dones[step] = next_done
 
             # ALGO LOGIC: action logic
@@ -229,26 +241,34 @@ if __name__ == "__main__":
                     if info and "episode" in info:
                         print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
                         writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                        writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+                        if 'bg' in info['episode']:
+                            writer.add_scalar("charts/episodic_bg", info["episode"]["bg"], global_step)
+                        # writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
 
         # bootstrap value if not done
         with torch.no_grad():
             next_value = agent.get_value(next_obs).reshape(1, -1)
             advantages = torch.zeros_like(rewards).to(device)
             lastgaelam = 0
-            for t in reversed(range(args.num_steps)):
-                if t == args.num_steps - 1:
+            for t in reversed(range(args.algo.num_steps)):
+                if t == args.algo.num_steps - 1:
                     nextnonterminal = 1.0 - next_done
                     nextvalues = next_value
                 else:
                     nextnonterminal = 1.0 - dones[t + 1]
                     nextvalues = values[t + 1]
-                delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
-                advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
+                delta = rewards[t] + args.algo.gamma * nextvalues * nextnonterminal - values[t]
+                advantages[t] = lastgaelam = delta + args.algo.gamma * args.algo.gae_lambda * nextnonterminal * lastgaelam
             returns = advantages + values
 
         # flatten the batch
-        b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
+        # b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)  # Create a batch of graphs
+        lattice_features = torch.stack([obs[i].lengths_angles for i in range(len(obs))])
+        lattice_features = torch.cat((lattice_features, torch.tensor([1.12]*lattice_features.shape[0])[:,None]), dim = 1)
+        focus_features = torch.stack([obs[i].focus for i in range(len(obs))])
+        focus_list_features = torch.stack([obs[i].focus_list for i in range(len(obs))])
+
+
         b_logprobs = logprobs.reshape(-1)
         b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
         b_advantages = advantages.reshape(-1)
@@ -256,15 +276,20 @@ if __name__ == "__main__":
         b_values = values.reshape(-1)
 
         # Optimizing the policy and value network
-        b_inds = np.arange(args.batch_size)
+        b_inds = np.arange(batch_size)
         clipfracs = []
-        for epoch in range(args.update_epochs):
+        for epoch in range(args.algo.update_epochs):
             np.random.shuffle(b_inds)
-            for start in range(0, args.batch_size, args.minibatch_size):
-                end = start + args.minibatch_size
-                mb_inds = b_inds[start:end]
+            for start in range(0, batch_size, minibatch_size):
+                
+                end = start + minibatch_size
+                b_obs = dgl.batch(obs[start:end])
+                b_obs.lengths_angles_focus = lattice_features[start:end].to(device = device)
+                b_obs.focus = focus_features[start:end].to(device = device).squeeze()
+                b_obs.focus_list = focus_list_features[start:end].to(device = device)
 
-                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs[mb_inds], b_actions.long()[mb_inds])
+                mb_inds = b_inds[start:end]
+                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs, b_actions.long()[mb_inds])
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
 
@@ -272,15 +297,15 @@ if __name__ == "__main__":
                     # calculate approx_kl http://joschu.net/blog/kl-approx.html
                     old_approx_kl = (-logratio).mean()
                     approx_kl = ((ratio - 1) - logratio).mean()
-                    clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+                    clipfracs += [((ratio - 1.0).abs() > args.algo.clip_coef).float().mean().item()]
 
                 mb_advantages = b_advantages[mb_inds]
-                if args.norm_adv:
+                if args.algo.norm_adv:
                     mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
                 # Policy loss
                 pg_loss1 = -mb_advantages * ratio
-                pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+                pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.algo.clip_coef, 1 + args.algo.clip_coef)
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
                 # Value loss
@@ -327,3 +352,5 @@ if __name__ == "__main__":
 
     envs.close()
     writer.close()
+if __name__ == '__main__':
+    main()

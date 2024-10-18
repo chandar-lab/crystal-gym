@@ -6,7 +6,6 @@ import numpy as np
 import pickle
 from copy import deepcopy
 import torch
-import ase
 from pymatgen.io.ase import AseAtomsAdaptor
 from crysrl.utils.create_graph import collate_function_crysrl
 from crystal_design.utils import cart_to_frac_coords
@@ -15,37 +14,43 @@ from pymatgen.core import Structure, Lattice
 from crystal_design.utils.data_utils import build_crystal, build_crystal_graph
 from crystal_design.utils.variables import ELEMENTS_SMALL, SPECIES_IND_INV, SPECIES_IND_SMALL
 from dgl.traversal import bfs_nodes_generator
+from crystal_gym.utils.variables import CUBIC_INDS_VAL
 
 class CrystalGymEnv(gym.Env):
     def __init__(self, 
-                 data_path = '/home/mila/p/prashant.govindarajan/scratch/crystal_design_project/crysrl/crysrl/data/mp_20/val.csv',
-                 kwargs = {'project':'project', 
+                 kwargs = {
+                           'data_path':'../data/mp_20.csv',
+                           'project':'project', 
                            'group':'group', 
                            'exp_name':'exp_name',
                            'seed':0,
-                           'options':{}}):
+                           'options':{'dataset':
+                                    'mp_20',
+                                    'mode':'single',
+                                    'p_hat':1.12,
+                                    'index':0,
+                                    }}):
         
         """
         Initialize the CrystalGymEnv class.
         Args:
             data_path (str): The path to the data file.
-            kwargs (dict): A dictionary containing the project, group, and experiment
+            options (dict): A dictionary containing the project, group, and experiment
         """
         super(CrystalGymEnv, self).__init__()
-
+        self.env_options = kwargs['env']
+        self.run_name = kwargs['env']['run_name']
         ## Load the data
-        self.data = pd.read_csv(data_path)
+        self.data = pd.read_csv(self.env_options['data_path'])
+
         # Define the action and observation space
         self.action_space = self.single_action_space = gym.spaces.Discrete(len(ELEMENTS_SMALL))
         self.observation_space =  self.single_observation_space = gym.spaces.Box(low=0, high=100, shape=(1,)) # Dummy observation space; actual space is a graph
 
-
         ## DFT Inputs
-        pseudo_dir = '/home/mila/p/prashant.govindarajan/scratch/crystal_design_project/crysrl/crysrl/files/SSSP'
-        pseudodict = pickle.load(open('/home/mila/p/prashant.govindarajan/scratch/crystal_design_project/crysrl/crysrl/files/pseudodict.pkl', 'rb'))
-        qe_inputs = {'prefix':"myprefix",'electron_maxstep':200,'outdir':'calculations','pseudo_dir': pseudo_dir, 'tstress':False,'tprnfor':False,'calculation':'scf', 
-                    'ecutrho':240,'verbosity':'high','ecutwfc':30, 'diagonalization': 'david', 'occupations':'fixed','smearing':'gaussian', 'mixing_mode':'plain', 
-                    'mixing_beta':0.7,'degauss':0.001, 'nspin':1, 'ntyp': 1}
+        qe_inputs = kwargs['qe']
+        pseudodict = pickle.load(open(kwargs['qe']['pseudodict'], 'rb'))
+        pseudo_dir = kwargs['qe']['pseudo_dir']
 
         profile = EspressoProfile(
                 command = "mpirun --bind-to none -np 1 /home/mila/p/prashant.govindarajan/scratch/qe-7.1/bin/pw.x",
@@ -55,50 +60,59 @@ class CrystalGymEnv(gym.Env):
         self.calculator = Espresso(profile = profile,
                                     pseudopotentials=pseudodict,
                                     input_data=qe_inputs, 
-                                    kpts=(3,3,3), 
-                                    directory= os.path.join('calculations', "_".join([kwargs['project'], kwargs['group'], kwargs['exp_name']])))
+                                    kpts=(4,4,4), 
+                                    directory= os.path.join('calculations', self.run_name))
         ####
-    
-        self.state, _ = self.reset(kwargs['seed'], kwargs['options'])
+        # self.project = options['project']    
+        # self.group = options['group']
+        # self.exp_name = options['exp_name']
+        # self.env_options = kwargs
+        self.state, _ = self.reset(self.env_options['seed'], {})
         self.t = 0
 
-    def reset(self, seed = 0, options = {}) :
+    def reset(self, 
+            seed = 0, 
+            options = {}):
         """
         Reset the environment.
         Returns:
             state (dict): The state of the environment.
         """
         info = {}
-        self.index = 0
-        self.ret = 0
-        self.sample_ind = 0
-        self.bfs_start = 0 
-        self.t = 0
+        if self.env_options['mode'] == 'single':
+            self.sample_ind = self.env_options['index']
+        elif self.env_options['mode'] == 'cubic':
+            self.sample_ind = np.random.choice(CUBIC_INDS_VAL)
+        
         cif_string = self.data.loc[self.sample_ind]['cif']
         canonical_crystal = build_crystal(cif_string)
         graph = build_crystal_graph(canonical_crystal, SPECIES_IND_INV)
+
         self.n_sites = graph.num_nodes()
-        self.history = []
+        self.bfs_start = np.random.choice(self.n_sites) 
         self.err_flag = 0
 
         if self.bfs_start >= self.n_sites:
             self.err_flag = 1
             return None
+        
         self.traversal = torch.cat(list(bfs_nodes_generator(graph, self.bfs_start)))
+
         try:
             assert len(self.traversal) == self.n_sites
         except:
             self.traversal = torch.tensor(list(range(self.n_sites)))
             self.err_flag = 1
+        self.t = 0
+    
         graph.focus = self.traversal[self.t]
         graph.focus_list = self.traversal
-        state = collate_function_crysrl(graph, p_hat = 1.12)
+        state = collate_function_crysrl(graph, p_hat = self.env_options['p_hat'])
 
         lengths = torch.tensor(canonical_crystal.lattice.abc)
         angles = torch.tensor(canonical_crystal.lattice.angles)
         state.lengths_angles = torch.cat([lengths, angles])
         self.n_sites = state.num_nodes()
-        self.history = []
         self.err_flag = 0
 
         if self.bfs_start >= self.n_sites:
@@ -107,10 +121,10 @@ class CrystalGymEnv(gym.Env):
         self.traversal = torch.cat(list(bfs_nodes_generator(state, self.bfs_start)))
         try:
             assert len(self.traversal) == self.n_sites
-        except:
+        except AssertionError:
             self.traversal = torch.tensor(list(range(self.n_sites)))
             self.err_flag = 1
-        self.t = 0
+
         return state, info
     
     def compute_reward(self):
@@ -129,21 +143,35 @@ class CrystalGymEnv(gym.Env):
         except:
             pass
         try:        
-            with open("/".join(['/home/mila/p/prashant.govindarajan/scratch/crystal_design_project/cleanrl/calculations/'+"_".join([self.project, self.group, self.exp_name]), 'espresso.pwo']), 'r') as f:
+            with open("/".join(['calculations/'+self.run_name, 'espresso.pwo']), 'r') as f:
                 lines = f.read()
                 tmp = lines.split('highest occupied, lowest unoccupied level (ev):')[-1].split()[:2]
                 bg = float(tmp[1]) - float(tmp[0])
                 if bg < 0.0:
                     bg = 0.0
-                self.reward_model.train()
-                success = True
-                self.num_simulation_steps += 1
-                dft_bg = bg
                 reward = self.distance(self.p_hat, torch.tensor([bg]))
+                # print('DFT Success!')
+                return reward, bg
         except:
+            # print('DFT Failed!')
             reward = -1.0
 
-        return reward
+        return reward, None
+    
+    def distance(self, target, predicted):
+        """
+        Compute the distance between two vectors.
+        Args:
+            x (torch.Tensor): The first vector.
+            y (torch.Tensor): The second vector.
+        Returns:
+            distance (float): The distance between the two vectors.
+        """
+        try:
+            d = torch.exp(-(target - predicted)**2 / 1.0)[0]
+        except:
+            d = torch.exp(-(target - predicted)**2 / 1.0)#[0]
+        return d
 
     def step(self, action):
         """
@@ -157,7 +185,7 @@ class CrystalGymEnv(gym.Env):
             truncated (bool): Whether the episode is truncated.
             info (dict): Additional information
         """
-        info = {}
+        info = {}  
         atomic_number = deepcopy(self.state.ndata['atomic_number'])
         index_curr_focus = self.traversal[self.t]
         atomic_number[index_curr_focus] = torch.tensor(action)
@@ -168,7 +196,10 @@ class CrystalGymEnv(gym.Env):
         if self.t == self.n_sites:
             terminated = truncated = True
             self.t = 0
-            reward = self.compute_reward()
+            reward, bg = self.compute_reward()
+            info['final_info'] = [{'episode':{'r':reward}}]
+            if bg is not None:
+                info['final_info'][0]['episode']['bg'] = bg
         else:
             terminated = truncated = False
             reward = 0.0
@@ -184,7 +215,13 @@ class CrystalGymEnv(gym.Env):
         angles = deepcopy(observations.lengths_angles_focus.cpu()[0][3:6])
         num_atoms = atomic_number.shape[0]
         frac_coords = cart_to_frac_coords(position.to(dtype=torch.float32).cpu(), lengths.unsqueeze(0), angles.unsqueeze(0), num_atoms)
-        state_dict = {'frac_coords':np.array(frac_coords), 'atom_types':np.array(atomic_number.cpu()), 'lengths':np.array(lengths), 'angles':np.array(angles), 'num_atoms':num_atoms}
+        state_dict = {
+                      'frac_coords':np.array(frac_coords), 
+                      'atom_types':np.array(atomic_number.cpu()), 
+                      'lengths':np.array(lengths), 
+                      'angles':np.array(angles), 
+                      'num_atoms':num_atoms
+                      }
         return state_dict
     
     def to_struct(self,state_dict):

@@ -1,0 +1,39 @@
+defaults:
+  - qe: qe.yaml
+  - env: env.yaml
+
+exp:
+  exp_name: ppo # the name of this experiment
+  seed: 1 # seed of the experiment
+  torch_deterministic: True # if toggled, `torch.backends.cudnn.deterministic=False`
+  cuda: True #if toggled, cuda will be enabled by default
+  track: True #if toggled, this experiment will be tracked with Weights and Biases
+  capture_video: False
+
+wandb:
+  mode: offline
+  wandb_project_name: PPO # the wandb's project name
+  wandb_group: PPO-DEFAULT # the entity (team) of wandb's project
+  capture_video: False # whether to capture videos of the agent performances (check out `videos` folder)
+
+# Algorithm specific arguments
+algo:
+  env_id: CrystalGymEnv-v0 # the id of the environment# 
+  total_timesteps: 500000 # total timesteps of the experiments# 
+  learning_rate: 2.5e-4 # the learning rate of the optimizer# 
+  num_envs: 1 # the number of parallel game environments# 
+  num_steps: 32 # the number of steps to run in each environment per policy rollout# ; reduce this 
+  anneal_lr: True # Toggle learning rate annealing for policy and value networks# 
+  gamma:  0.99 # the discount factor gamma# 
+  gae_lambda: 0.95 # the lambda for the general advantage estimation# 
+  num_minibatches: 2 # the number of mini-batches# 
+  update_epochs: 4 # the K epochs to update the policy# 
+  norm_adv: True # Toggles advantages normalization# 
+  clip_coef: 0.2 # the surrogate clipping coefficient# 
+  clip_vloss: True # Toggles whether or not to use a clipped loss for the value function, as per the paper.# 
+  ent_coef: 0.01 # coefficient of the entropy# 
+  vf_coef: 0.5 # coefficient of the value function# ; also check 1.0
+  max_grad_norm: 0.5 # the maximum norm for the gradient clipping# 
+  target_kl: None # the target KL divergence threshold# 
+
+  

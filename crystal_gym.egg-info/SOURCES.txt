@@ -1,0 +1,7 @@
+README.md
+setup.py
+crystal_gym.egg-info/PKG-INFO
+crystal_gym.egg-info/SOURCES.txt
+crystal_gym.egg-info/dependency_links.txt
+crystal_gym.egg-info/requires.txt
+crystal_gym.egg-info/top_level.txt

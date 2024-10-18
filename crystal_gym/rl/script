@@ -1,0 +1,31 @@
+#!/bin/bash
+#SBATCH --job-name=dft-RL
+#SBATCH --output=output/experiment-%A.%a.out
+#SBATCH --error=error/experiment-%A.%a.err
+#SBATCH --ntasks=2
+#SBATCH --cpus-per-task=2
+#SBATCH --gpus=a100l:1
+#SBATCH --time=2-00:00:00
+#SBATCH --mem=32Gb
+#SBATCH --exclude=cn-k[001-002]
+
+module load anaconda/3
+module load cuda/12.2.2
+conda activate crysrl
+
+# module load cuda/12.2.2
+module use --priority 100 /home/mila/p/prashant.govindarajan/pkgs/nvhpc_2023_237_Linux_x86_64_cuda_multi/modulefiles
+module load nvhpc-hpcx-cuda12
+export NVHPC_CUDA_HOME="$CUDA_HOME"
+export OMP_NUM_THREADS=2
+
+# python finetuna_wrap.py -c /network/scratch/p/prashant.govindarajan/crystal_design_project/new_project/finetuna/finetuna/checkpoint/gemnet_t_direct_h512_all.pt --rl /network/scratch/p/prashant.govindarajan/crystal_design_project/new_project/finetuna/finetuna/checkpoint/112eV/checkpoint_250000.pt --seed $1 --beta $2 --num_gradqients_per_step $3 --target_update_freq $4 --eps_start $5 --eps_decay $6 --group $7 --exp_name $8 --distance $9 --replay ${10} --double ${11}
+# python finetuna_wrap.py -c /network/scratch/p/prashant.govindarajan/crystal_design_project/new_project/finetuna/finetuna/checkpoint/gemnet_t_direct_h512_all.pt --seed $1 --num_gradients_per_step $2 --target_update_freq $3 --eps_start $4 --eps_decay $5 --group $6 --exp_name $7 --distance $8 --qnet $9 --onesample one --num_iter 500000 --explore_steps 50000 --project MLP-ONLY-AL --eps_min 0.001   #--rl /network/scratch/p/prashant.govindarajan/crystal_design_project/new_project/finetuna/finetuna/checkpoint/112eV/checkpoint_250000.pt
+# python finetuna_wrap.py -c /network/scratch/p/prashant.govindarajan/crystal_design_project/new_project/finetuna/finetuna/checkpoint/gemnet_t_direct_h512_all.pt --seed $1 --beta $2 --num_gradients_per_step $3 --target_update_freq $4 --eps_start $5 --eps_decay $6 --group $7 --exp_name $8 --distance $9 --qnet ${10} --onesample one --num_iter 100000 --exploration egreedy --rl /home/mila/p/prashant.govindarajan/scratch/crystal_design_project/crystal-design/crystal_design/runner/models/Run1-crystal-bc6be263/checkpoint_250000.pt --project QNETAblationBG
+# python finetuna_wrap.py -c /network/scratch/p/prashant.govindarajan/crystal_design_project/new_project/finetuna/finetuna/checkpoint/gemnet_t_direct_h512_all.pt --seed $1 --beta $2 --num_gradients_per_step $3 --target_update_freq $4 --eps_start $5 --eps_decay $6 --group $7 --exp_name $8 --distance $9 --qnet ${10} --onesample one --num_iter 100000 --exploration egreedy --rl /home/mila/p/prashant.govindarajan/scratch/crystal_design_project/crystal-design/crystal_design/runner/models/Run1-crystal-bc6be263/checkpoint_250000.pt --project QNETAblationDFT --eps_min 0.0001
+# python finetuna_wrap.py -c /network/scratch/p/prashant.govindarajan/crystal_design_project/new_project/finetuna/finetuna/checkpoint/gemnet_t_direct_h512_all.pt --seed $1 --beta $2 --num_gradients_per_step $3 --target_update_freq $4 --eps_start $5 --eps_decay $6 --group $7 --exp_name $8 --distance $9 --qnet ${10} --onesample one --num_iter 100000 --exploration egreedy --project QNETAblationDFT --eps_min 0.0001 #--dft True --dft_freq 500 
+# WANDB__SERVICE_WAIT=60 python -W ignore finetuna_wrap.py --seed $1 --beta 1.0 --num_gradients_per_step $2 --target_update_freq $3 --eps_start $4 --eps_decay $5 --group $6 --exp_name $7 --distance $8 --qnet $9 --reward_lr ${10} --reward_gradients ${11} --onesample one --num_iter 500000 --exploration egreedy --project ENS-PROXY-SINGLE-QE-SIMPLE --eps_min 0.001 --dft True --dft_freq 50 --explore_steps 30000 --replay_size 200000 --relax True --ensemble_rewards True --dft_proxy linear --tmp_flag True #--finetune_batches True 
+# WANDB__SERVICE_WAIT=60 python -W ignore finetuna_wrap.py --seed $1 --beta 1.0 --num_gradients_per_step $2 --target_update_freq $3 --eps_start $4 --eps_decay $5 --group $6 --exp_name $7 --distance $8 --qnet $9 --reward_lr ${10} --reward_gradients ${11} --onesample one --num_iter 500000 --exploration egreedy --project ENS-DQN-SINGLE --eps_min 0.001 --explore_steps 30000 --replay_size 200000 --ensemble_rewards True #--finetune_batches True 
+
+python ppo.py wandb.mode=online
+

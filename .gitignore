@@ -1,0 +1,10 @@
+outputs
+output
+error
+files
+wandb
+runs
+data
+calculations
+*.csv
+__pycache__
