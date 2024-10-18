@@ -34,6 +34,6 @@ algo:
   ent_coef: 0.01 # coefficient of the entropy# 
   vf_coef: 0.5 # coefficient of the value function# ; also check 1.0
   max_grad_norm: 0.5 # the maximum norm for the gradient clipping# 
-  target_kl: None # the target KL divergence threshold# 
+  target_kl: null # the target KL divergence threshold# 
 
   
