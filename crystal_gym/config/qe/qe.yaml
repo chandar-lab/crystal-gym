@@ -4,7 +4,7 @@ outdir: calculations
 pseudo_dir: /home/mila/p/prashant.govindarajan/scratch/crystal_design_project/crystal-gym/crystal_gym/files/SSSP
 pseudodict: /home/mila/p/prashant.govindarajan/scratch/crystal_design_project/crystal-gym/crystal_gym/files/pseudodict.pkl
 tstress: false
-tprnfor: true
+tprnfor: false
 calculation: scf
 ecutwfc: 50
 ecutrho: 400
@@ -16,3 +16,4 @@ mixing_mode: plain
 mixing_beta: 0.7
 degauss: 0.001
 nspin: 1
+kppa: 1000

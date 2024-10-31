@@ -9,6 +9,7 @@ exp:
   cuda: True #if toggled, cuda will be enabled by default
   track: True #if toggled, this experiment will be tracked with Weights and Biases
   capture_video: False
+  save_freq: 100 # the frequency of saving the model
 
 wandb:
   mode: offline
@@ -22,7 +23,7 @@ algo:
   total_timesteps: 500000 # total timesteps of the experiments# 
   learning_rate: 2.5e-4 # the learning rate of the optimizer# 
   num_envs: 1 # the number of parallel game environments# 
-  num_steps: 32 # the number of steps to run in each environment per policy rollout# ; reduce this 
+  num_steps: 32 # the number of steps to run in each environment per policy rollout# 
   anneal_lr: True # Toggle learning rate annealing for policy and value networks# 
   gamma:  0.99 # the discount factor gamma# 
   gae_lambda: 0.95 # the lambda for the general advantage estimation# 

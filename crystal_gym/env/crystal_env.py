@@ -6,10 +6,12 @@ import numpy as np
 import pickle
 from copy import deepcopy
 import torch
+import time
 from pymatgen.io.ase import AseAtomsAdaptor
 from crysrl.utils.create_graph import collate_function_crysrl
 from crystal_design.utils import cart_to_frac_coords
 from ase.calculators.espresso import Espresso, EspressoProfile
+from pymatgen.io.vasp.inputs import Kpoints
 from pymatgen.core import Structure, Lattice
 from crystal_design.utils.data_utils import build_crystal, build_crystal_graph
 from crystal_design.utils.variables import ELEMENTS_SMALL, SPECIES_IND_INV, SPECIES_IND_SMALL
@@ -48,20 +50,20 @@ class CrystalGymEnv(gym.Env):
         self.observation_space =  self.single_observation_space = gym.spaces.Box(low=0, high=100, shape=(1,)) # Dummy observation space; actual space is a graph
 
         ## DFT Inputs
-        qe_inputs = kwargs['qe']
-        pseudodict = pickle.load(open(kwargs['qe']['pseudodict'], 'rb'))
+        self.qe_inputs = kwargs['qe']
+        self.pseudodict = pickle.load(open(kwargs['qe']['pseudodict'], 'rb'))
         pseudo_dir = kwargs['qe']['pseudo_dir']
 
-        profile = EspressoProfile(
+        self.profile = EspressoProfile(
                 command = "mpirun --bind-to none -np 1 /home/mila/p/prashant.govindarajan/scratch/qe-7.1/bin/pw.x",
                 pseudo_dir = pseudo_dir,
             )
 
-        self.calculator = Espresso(profile = profile,
-                                    pseudopotentials=pseudodict,
-                                    input_data=qe_inputs, 
-                                    kpts=(4,4,4), 
-                                    directory= os.path.join('calculations', self.run_name))
+        # self.calculator = Espresso(profile = self.profile,
+        #                             pseudopotentials=self.pseudodict,
+        #                             input_data=self.qe_inputs, 
+        #                             kpts=(4,4,4), 
+        #                             directory= os.path.join('calculations', self.run_name))
         ####
         # self.project = options['project']    
         # self.group = options['group']
@@ -133,30 +135,47 @@ class CrystalGymEnv(gym.Env):
         Returns:
             reward (float): The reward.
         """
-
+        error_flag = 0
         canonical_crystal = self.render()
         # species = set([sp.name for sp in canonical_crystal.species])
         atoms = AseAtomsAdaptor.get_atoms(canonical_crystal)
-        atoms.calc = self.calculator
+        nbnd = int(np.ceil(sum(atoms.get_atomic_numbers()) // 2 * 1.2))
+        self.qe_inputs.update({'nbnd':nbnd})
+        kpts = Kpoints.automatic_density(canonical_crystal, kppa = self.qe_inputs['kppa']).kpts[0]
+        atoms.calc = Espresso(profile = self.profile,
+                                pseudopotentials=self.pseudodict,
+                                input_data=self.qe_inputs, 
+                                kpts=kpts, 
+                                directory= os.path.join('calculations', self.run_name))
         try:
+            start_time = time.time()
             energy = atoms.get_potential_energy()
         except:
             pass
-        try:        
+        try:
+            end_time = time.time()        
             with open("/".join(['calculations/'+self.run_name, 'espresso.pwo']), 'r') as f:
                 lines = f.read()
+                if 'convergence NOT achieved after' in lines:
+                    error_flag = 1
+                    assert False
+                elif 'charge is wrong' in lines:
+                    error_flag = 2
+                    assert False
                 tmp = lines.split('highest occupied, lowest unoccupied level (ev):')[-1].split()[:2]
                 bg = float(tmp[1]) - float(tmp[0])
                 if bg < 0.0:
                     bg = 0.0
-                reward = self.distance(self.p_hat, torch.tensor([bg]))
+                reward = self.distance(self.env_options['p_hat'], torch.tensor([bg])).item()
                 # print('DFT Success!')
-                return reward, bg
+                sim_time = end_time - start_time
+                return reward, bg, error_flag, sim_time
         except:
-            # print('DFT Failed!')
+            if error_flag == 0:
+                error_flag = 3
             reward = -1.0
 
-        return reward, None
+        return reward, None, error_flag, None
     
     def distance(self, target, predicted):
         """
@@ -196,10 +215,12 @@ class CrystalGymEnv(gym.Env):
         if self.t == self.n_sites:
             terminated = truncated = True
             self.t = 0
-            reward, bg = self.compute_reward()
+            reward, bg, error_flag, sim_time = self.compute_reward()
             info['final_info'] = [{'episode':{'r':reward}}]
+            info['final_info'][0]['episode']['error_flag'] = error_flag
             if bg is not None:
                 info['final_info'][0]['episode']['bg'] = bg
+                info['final_info'][0]['episode']['sim_time'] = sim_time
         else:
             terminated = truncated = False
             reward = 0.0

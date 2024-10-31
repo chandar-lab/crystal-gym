@@ -13,75 +13,11 @@ import torch.nn as nn
 import torch.optim as optim
 import tyro
 from torch.distributions.categorical import Categorical
-from crystal_gym.env import CrystalGymEnv
 import hydra
-from omegaconf import DictConfig, OmegaConf
-from functools import partial
+from omegaconf import DictConfig
 from torch.utils.tensorboard import SummaryWriter
 from crystal_design.agents import MEGNetRL
-
-# def args(cfg: DictConfig) -> None: 
-#     print(OmegaConf.to_yaml(cfg))
-#     # exp_name: str = os.path.basename(__file__)[: -len(".py")]
-#     # """the name of this expaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaeriment"""
-#     # seed: int = 1
-#     # """seed of the experiment"""
-#     # torch_deterministic: bool = True
-#     # """if toggled, `torch.backends.cudnn.deterministic=False`"""
-#     # cuda: bool = True
-#     # """if toggled, cuda will be enabled by default"""
-#     # track: bool = True
-#     # """if toggled, this experiment will be tracked with Weights and Biases"""
-#     # wandb_project_name: str = "PPO"
-#     # """the wandb's project name"""
-#     # wandb_entity: str = None
-#     # """the entity (team) of wandb's project"""
-#     # capture_video: bool = False
-#     # """whether to capture videos of the agent performances (check out `videos` folder)"""
-
-#     # # Algorithm specific arguments
-#     # env_id: str = "CartPole-v1"
-#     # """the id of the environment"""
-#     # total_timesteps: int = 500000
-#     # """total timesteps of the experiments"""
-#     # learning_rate: float = 2.5e-4
-#     # """the learning rate of the optimizer"""
-#     # num_envs: int = 4
-#     # """the number of parallel game environments"""
-#     # num_steps: int = 128
-#     # """the number of steps to run in each environment per policy rollout"""
-#     # anneal_lr: bool = True
-#     # """Toggle learning rate annealing for policy and value networks"""
-#     # gamma: float = 0.99
-#     # """the discount factor gamma"""
-#     # gae_lambda: float = 0.95
-#     # """the lambda for the general advantage estimation"""
-#     # num_minibatches: int = 4
-#     # """the number of mini-batches"""
-#     # update_epochs: int = 4
-#     # """the K epochs to update the policy"""
-#     # norm_adv: bool = True
-#     # """Toggles advantages normalization"""
-#     # clip_coef: float = 0.2
-#     # """the surrogate clipping coefficient"""
-#     # clip_vloss: bool = True
-#     # """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
-#     # ent_coef: float = 0.01
-#     # """coefficient of the entropy"""
-#     # vf_coef: float = 0.5
-#     # """coefficient of the value function"""
-#     # max_grad_norm: float = 0.5
-#     # """the maximum norm for the gradient clipping"""
-#     # target_kl: float = None
-#     # """the target KL divergence threshold"""
-
-#     # # to be filled in runtime
-#     # batch_size: int = 0
-#     # """the batch size (computed in runtime)"""
-#     # minibatch_size: int = 0
-#     # """the mini-batch size (computed in runtime)"""
-#     # num_iterations: int = 0
-#     # """the number of iterations (computed in runtime)"""
+from crystal_gym.env import CrystalGymEnv
 
 
 def make_env(env_id, idx, capture_video, run_name, kwargs):
@@ -153,23 +89,7 @@ def main(args: DictConfig) -> None:
     batch_size = int(args.algo.num_envs * args.algo.num_steps)
     minibatch_size = int(batch_size // args.algo.num_minibatches)
     num_iterations = args.algo.total_timesteps // batch_size
-    run_name = f"{args.algo.env_id}__{args.exp.exp_name}__{args.exp.seed}__{int(time.time())}"
-    if args.exp.track:
-        wandb.init(
-            project=args.wandb.wandb_project_name,
-            group=args.wandb.wandb_group,
-            sync_tensorboard=True,
-            config=dict(args),
-            name=run_name,
-            monitor_gym=True,
-            save_code=True,
-            mode=args.wandb.mode,
-        )
-    writer = SummaryWriter(f"runs/{run_name}")
-    writer.add_text(
-        "hyperparameters",
-        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
-    )
+    run_name = f"{args.algo.env_id}__{args.exp.exp_name}__{args.exp.seed}"
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.exp.seed)
@@ -204,13 +124,69 @@ def main(args: DictConfig) -> None:
     values = torch.zeros((args.algo.num_steps, args.algo.num_envs)).to(device)
 
     # TRY NOT TO MODIFY: start the game
-    global_step = 0
     start_time = time.time()
     next_obs, _ = envs.reset(seed=args.exp.seed)
     next_obs = next_obs.to(device)
     next_done = torch.zeros(args.algo.num_envs).to(device)
 
-    for iteration in range(1, num_iterations + 1):
+    # SAVE AND LOAD 
+    save_path = os.path.join(os.getcwd(), "models", run_name)
+    try:
+        start_iteration = 1
+        global_step = 0
+        os.makedirs(save_path)
+    except OSError:
+        files = os.listdir(save_path)
+        if len(files) > 0:
+            indices = sorted([int(file.split('_')[-1].split('.')[0]) for file in files if 'ckpt' in file])
+            ind = indices[-1]
+            try:
+                run_state = torch.load(os.path.join(save_path, f"ckpt_{ind}.pt"))
+            except:
+                ind = indices[-2]
+                run_state = torch.load(os.path.join(save_path, f"ckpt_{ind}.pt"))
+            
+            start_iteration = run_state["iteration"]
+            agent.load_state_dict(run_state["states"]["agent"])
+            optimizer.load_state_dict(run_state["states"]["optimizer"])
+            run_id = run_state["run_id"]
+
+            global_step = run_state["global_step"]
+
+            actions = run_state["variables"]["actions"]
+            values = run_state["variables"]["values"]
+            logprobs = run_state["variables"]["logprobs"]
+            rewards = run_state["variables"]["rewards"]
+            dones = run_state["variables"]["dones"]
+
+            print("Resuming from iteration ", start_iteration)
+
+    if args.exp.track:
+        try:
+            print("Resuming from previous run ", run_id)
+        except:
+            run_id = None
+        wandb.init(
+            project=args.wandb.wandb_project_name,
+            group=args.wandb.wandb_group,
+            sync_tensorboard=True,
+            config=dict(args),
+            name=run_name,
+            monitor_gym=True,
+            save_code=True,
+            mode=args.wandb.mode,
+            id = run_id,
+            resume="allow"
+        )
+        run_id = wandb.run.id
+    writer = SummaryWriter(f"runs/{run_name}")
+    writer.add_text(
+        "hyperparameters",
+        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
+    )
+
+
+    for iteration in range(start_iteration, num_iterations + 1):
         # Annealing the rate if instructed to do so.
         if args.algo.anneal_lr:
             frac = 1.0 - (iteration - 1.0) / num_iterations
@@ -241,8 +217,10 @@ def main(args: DictConfig) -> None:
                     if info and "episode" in info:
                         print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
                         writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
+                        writer.add_scalar("charts/episodic_error", info["episode"]["error_flag"], global_step)
                         if 'bg' in info['episode']:
                             writer.add_scalar("charts/episodic_bg", info["episode"]["bg"], global_step)
+                            writer.add_scalar("charts/episodic_sim_time", info["episode"]["sim_time"], global_step)
                         # writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
 
         # bootstrap value if not done
@@ -264,7 +242,7 @@ def main(args: DictConfig) -> None:
         # flatten the batch
         # b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)  # Create a batch of graphs
         lattice_features = torch.stack([obs[i].lengths_angles for i in range(len(obs))])
-        lattice_features = torch.cat((lattice_features, torch.tensor([1.12]*lattice_features.shape[0])[:,None]), dim = 1)
+        lattice_features = torch.cat((lattice_features, torch.tensor([args.env.p_hat]*lattice_features.shape[0])[:,None]), dim = 1)
         focus_features = torch.stack([obs[i].focus for i in range(len(obs))])
         focus_list_features = torch.stack([obs[i].focus_list for i in range(len(obs))])
 
@@ -337,6 +315,23 @@ def main(args: DictConfig) -> None:
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+
+        if iteration % args.exp.save_freq == 0:
+            variables = {"actions": actions, "values": values, "logprobs": logprobs, "rewards": rewards, "dones": dones}
+            states = {"agent": agent.state_dict(), "optimizer": optimizer.state_dict()}
+            run_state = {
+                            "iteration": iteration,
+                            "run_name": run_name,
+                            "run_id": run_id,
+                            "global_step": global_step,
+                            "variables": variables, 
+                            "states": states
+                        }
+            torch.save(run_state, os.path.join(save_path, f"ckpt_{iteration}.pt"))
+            files = os.listdir(save_path)
+            if len(files) > 10:
+                files = sorted(files, key = lambda x: int(x.split('_')[-1].split('.')[0]))[:-10]
+                [os.remove(os.path.join(save_path, file)) for file in files]
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
