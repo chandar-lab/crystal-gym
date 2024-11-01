@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=dft-2190
+#SBATCH --job-name=dft-BM-2190
 #SBATCH --output=output/experiment-%A.%a.out
 #SBATCH --error=error/experiment-%A.%a.err
 #SBATCH --ntasks=2
@@ -44,6 +44,8 @@ export OMP_NUM_THREADS=2
 
 # python sac.py wandb.mode=online exp.exp_name=sac-basic-3403 exp.seed=10 env.seed=10 env.index=3403 wandb.wandb_group=SAC-DEFAULT-3403
 # python sac.py wandb.mode=online exp.exp_name=sac-basic-3403 exp.seed=20 env.seed=20 env.index=3403 wandb.wandb_group=SAC-DEFAULT-3403
-python sac.py wandb.mode=online exp.exp_name=sac-basic-3403 exp.seed=30 env.seed=30 env.index=3403 wandb.wandb_group=SAC-DEFAULT-3403
+# python sac.py wandb.mode=online exp.exp_name=sac-basic-3403 exp.seed=30 env.seed=30 env.index=3403 wandb.wandb_group=SAC-DEFAULT-3403
 
-
+python ppo.py wandb.mode=online wandb.wandb_project_name=PPO-BM wandb.wandb_group=PPO-BM-2190 exp.exp_name=PPO-BM-basic-2190 exp.seed=10 env.seed=10 env.index=2190 env.property=bm env.p_hat=300.0 qe.tstress=true qe.tprnfor=true qe.occupations=smearing
+# python sac.py wandb.mode=online exp.exp_name=sac-basic-2190 exp.seed=20 env.seed=20 env.index=2190 wandb.wandb_group=SAC-DEFAULT-2190
+# python sac.py wandb.mode=online exp.exp_name=sac-basic-2190 exp.seed=30 env.seed=30 env.index=2190 wandb.wandb_group=SAC-DEFAULT-2190

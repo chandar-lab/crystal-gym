@@ -8,15 +8,18 @@ from copy import deepcopy
 import torch
 import time
 from pymatgen.io.ase import AseAtomsAdaptor
-from crysrl.utils.create_graph import collate_function_crysrl
-from crystal_design.utils import cart_to_frac_coords
+from crystal_gym.utils.create_graph import collate_function_crysrl
+from crystal_gym.utils import cart_to_frac_coords
 from ase.calculators.espresso import Espresso, EspressoProfile
 from pymatgen.io.vasp.inputs import Kpoints
 from pymatgen.core import Structure, Lattice
-from crystal_design.utils.data_utils import build_crystal, build_crystal_graph
-from crystal_design.utils.variables import ELEMENTS_SMALL, SPECIES_IND_INV, SPECIES_IND_SMALL
+from crystal_gym.utils.data_utils import build_crystal, build_crystal_graph
+from crystal_gym.utils.variables import ELEMENTS_SMALL, SPECIES_IND_INV, SPECIES_IND_SMALL
 from dgl.traversal import bfs_nodes_generator
 from crystal_gym.utils.variables import CUBIC_INDS_VAL
+import subprocess
+
+RY_CONST = 13.605691932782346
 
 class CrystalGymEnv(gym.Env):
     def __init__(self, 
@@ -55,7 +58,7 @@ class CrystalGymEnv(gym.Env):
         pseudo_dir = kwargs['qe']['pseudo_dir']
 
         self.profile = EspressoProfile(
-                command = "mpirun --bind-to none -np 1 /home/mila/p/prashant.govindarajan/scratch/qe-7.1/bin/pw.x",
+                command = "mpirun --bind-to none -np 1 /home/mila/p/prashant.govindarajan/scratch/qe-7.3.1/bin/pw.x",
                 pseudo_dir = pseudo_dir,
             )
 
@@ -129,6 +132,49 @@ class CrystalGymEnv(gym.Env):
 
         return state, info
     
+    def calculate_bm(self, atoms, celldm):
+        """
+        Calculate the bulk modulus.
+        Args:
+            atoms (ase.Atoms): The atoms object.
+        Returns:
+            bm (float): The bulk modulus.
+        """
+        lengths = []
+        energies = []
+        for factor in np.linspace(0.98, 1.02, 5):
+            scaled_atoms = atoms.copy()
+            scaled_atoms.set_cell(atoms.get_cell() * factor**(1/3), scale_atoms=True)
+            scaled_atoms.calc = atoms.calc
+            try:
+                energy = scaled_atoms.get_potential_energy() / RY_CONST
+            except:
+                return None, 1
+            volume = scaled_atoms.get_volume()
+            
+            lengths.append(volume ** (1/3))
+            energies.append(energy)
+        
+        with open(os.path.join('calculations', self.run_name, 'length_energy.dat'), 'w') as f:
+            for v, e in zip(lengths, energies):
+                f.write(f"{v:.6f} {e:.6f}\n")
+        
+        with open(os.path.join('calculations', self.run_name, 'ev.in'), 'w') as f:
+            f.write("Ang\n")
+            f.write("sc\n")  # Use 'noncubic' to treat input as volumes
+            f.write("4\n")  # Murnaghan EOS
+            f.write(os.path.join('calculations', self.run_name, 'length_energy.dat') + "\n")
+            f.write(os.path.join('calculations', self.run_name, 'ev.txt') + "\n")
+
+        path = os.path.join('calculations', self.run_name, 'ev.in')
+        subprocess.run(f"mpirun --bind-to none -np 1 /home/mila/p/prashant.govindarajan/scratch/qe-7.3.1/bin/ev.x < {path}", shell=True)
+
+        with open(os.path.join('calculations', self.run_name, 'ev.txt'), 'r') as f:
+            lines = f.readlines()
+            bm = float(lines[2].split()[7])
+        return bm, 0
+
+    
     def compute_reward(self):
         """
         Compute the reward.
@@ -142,40 +188,54 @@ class CrystalGymEnv(gym.Env):
         nbnd = int(np.ceil(sum(atoms.get_atomic_numbers()) // 2 * 1.2))
         self.qe_inputs.update({'nbnd':nbnd})
         kpts = Kpoints.automatic_density(canonical_crystal, kppa = self.qe_inputs['kppa']).kpts[0]
+        # breakpoint()
+        
         atoms.calc = Espresso(profile = self.profile,
                                 pseudopotentials=self.pseudodict,
                                 input_data=self.qe_inputs, 
                                 kpts=kpts, 
                                 directory= os.path.join('calculations', self.run_name))
-        try:
+        if self.env_options['property'] == 'bm':
+            cell_dm = canonical_crystal.lattice.a
             start_time = time.time()
-            energy = atoms.get_potential_energy()
-        except:
-            pass
-        try:
-            end_time = time.time()        
-            with open("/".join(['calculations/'+self.run_name, 'espresso.pwo']), 'r') as f:
-                lines = f.read()
-                if 'convergence NOT achieved after' in lines:
-                    error_flag = 1
-                    assert False
-                elif 'charge is wrong' in lines:
-                    error_flag = 2
-                    assert False
-                tmp = lines.split('highest occupied, lowest unoccupied level (ev):')[-1].split()[:2]
-                bg = float(tmp[1]) - float(tmp[0])
-                if bg < 0.0:
-                    bg = 0.0
-                reward = self.distance(self.env_options['p_hat'], torch.tensor([bg])).item()
-                # print('DFT Success!')
-                sim_time = end_time - start_time
-                return reward, bg, error_flag, sim_time
-        except:
+            bm, error_flag = self.calculate_bm(atoms, cell_dm)
+            end_time = time.time()
             if error_flag == 0:
-                error_flag = 3
-            reward = -1.0
+                reward = -np.abs(self.env_options['p_hat'] - bm)
+                sim_time = end_time - start_time
+                return reward, bm, error_flag, sim_time
+            else:
+                return -1.0, None, error_flag, None
+        else:
+            try:
+                start_time = time.time()
+                energy = atoms.get_potential_energy()
+            except:
+                pass
+            try:
+                end_time = time.time()        
+                with open("/".join(['calculations/'+self.run_name, 'espresso.pwo']), 'r') as f:
+                    lines = f.read()
+                    if 'convergence NOT achieved after' in lines:
+                        error_flag = 1
+                        assert False
+                    elif 'charge is wrong' in lines:
+                        error_flag = 2
+                        assert False
+                    tmp = lines.split('highest occupied, lowest unoccupied level (ev):')[-1].split()[:2]
+                    bg = float(tmp[1]) - float(tmp[0])
+                    if bg < 0.0:
+                        bg = 0.0
+                    reward = self.distance(self.env_options['p_hat'], torch.tensor([bg])).item()
+                    # print('DFT Success!')
+                    sim_time = end_time - start_time
+                    return reward, bg, error_flag, sim_time
+            except:
+                if error_flag == 0:
+                    error_flag = 3
+                reward = -1.0
 
-        return reward, None, error_flag, None
+            return reward, None, error_flag, None
     
     def distance(self, target, predicted):
         """

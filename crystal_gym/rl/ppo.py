@@ -16,7 +16,7 @@ from torch.distributions.categorical import Categorical
 import hydra
 from omegaconf import DictConfig
 from torch.utils.tensorboard import SummaryWriter
-from crystal_design.agents import MEGNetRL
+from crystal_gym.agents import MEGNetRL
 from crystal_gym.env import CrystalGymEnv
 
 
