@@ -3,6 +3,7 @@ electron_maxstep: 300
 outdir: calculations
 pseudo_dir: /home/mila/p/prashant.govindarajan/scratch/crystal_design_project/crystal-gym/crystal_gym/files/SSSP
 pseudodict: /home/mila/p/prashant.govindarajan/scratch/crystal_design_project/crystal-gym/crystal_gym/files/pseudodict.pkl
+qe_dir: /home/mila/p/prashant.govindarajan/scratch/qe-7.3.1
 tstress: false
 tprnfor: false
 calculation: scf

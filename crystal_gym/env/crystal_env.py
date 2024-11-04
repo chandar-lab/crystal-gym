@@ -58,20 +58,10 @@ class CrystalGymEnv(gym.Env):
         pseudo_dir = kwargs['qe']['pseudo_dir']
 
         self.profile = EspressoProfile(
-                command = "mpirun --bind-to none -np 1 /home/mila/p/prashant.govindarajan/scratch/qe-7.3.1/bin/pw.x",
+                command = f"mpirun --bind-to none -np 1 {kwargs['qe']['qe_dir']}/bin/pw.x",
                 pseudo_dir = pseudo_dir,
             )
-
-        # self.calculator = Espresso(profile = self.profile,
-        #                             pseudopotentials=self.pseudodict,
-        #                             input_data=self.qe_inputs, 
-        #                             kpts=(4,4,4), 
-        #                             directory= os.path.join('calculations', self.run_name))
-        ####
-        # self.project = options['project']    
-        # self.group = options['group']
-        # self.exp_name = options['exp_name']
-        # self.env_options = kwargs
+        
         self.state, _ = self.reset(self.env_options['seed'], {})
         self.t = 0
 
@@ -167,11 +157,15 @@ class CrystalGymEnv(gym.Env):
             f.write(os.path.join('calculations', self.run_name, 'ev.txt') + "\n")
 
         path = os.path.join('calculations', self.run_name, 'ev.in')
-        subprocess.run(f"mpirun --bind-to none -np 1 /home/mila/p/prashant.govindarajan/scratch/qe-7.3.1/bin/ev.x < {path}", shell=True)
+        subprocess.run(f"mpirun --bind-to none -np 1 {self.qe_inputs['qe_dir']}/bin/ev.x < {path}", shell=True)
 
         with open(os.path.join('calculations', self.run_name, 'ev.txt'), 'r') as f:
             lines = f.readlines()
-            bm = float(lines[2].split()[7])
+            string = lines[2].split()[7]
+            if 'GPa' in string:
+                bm = float(lines[2].split()[6].split('=')[1])
+            else:
+                bm = float(lines[2].split()[7])
         return bm, 0
 
     
@@ -201,11 +195,11 @@ class CrystalGymEnv(gym.Env):
             bm, error_flag = self.calculate_bm(atoms, cell_dm)
             end_time = time.time()
             if error_flag == 0:
-                reward = -np.abs(self.env_options['p_hat'] - bm)
+                reward = - np.abs(self.env_options['p_hat'] - bm) / self.env_options['p_hat']
                 sim_time = end_time - start_time
                 return reward, bm, error_flag, sim_time
             else:
-                return -1.0, None, error_flag, None
+                return -5.0, None, error_flag, None
         else:
             try:
                 start_time = time.time()
