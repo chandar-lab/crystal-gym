@@ -10,14 +10,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import tyro
-from stable_baselines3.common.atari_wrappers import (
-    ClipRewardEnv,
-    EpisodicLifeEnv,
-    FireResetEnv,
-    MaxAndSkipEnv,
-    NoopResetEnv,
-)
 from stable_baselines3.common.buffers import ReplayBuffer
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
@@ -28,58 +20,7 @@ from crystal_gym.env import CrystalGymEnv
 from copy import deepcopy
 from torchrl.data import ReplayBuffer, ListStorage
 from functools import partial
-from crystal_design.utils import collate_function
-
-
-# @dataclass
-# class Args:
-#     exp_name: str = os.path.basename(__file__)[: -len(".py")]
-#     """the name of this experiment"""
-#     seed: int = 1
-#     """seed of the experiment"""
-#     torch_deterministic: bool = True
-#     """if toggled, `torch.backends.cudnn.deterministic=False`"""
-#     cuda: bool = True
-#     """if toggled, cuda will be enabled by default"""
-#     track: bool = False
-#     """if toggled, this experiment will be tracked with Weights and Biases"""
-#     wandb_project_name: str = "cleanRL"
-#     """the wandb's project name"""
-#     wandb_entity: str = None
-#     """the entity (team) of wandb's project"""
-#     capture_video: bool = False
-#     """whether to capture videos of the agent performances (check out `videos` folder)"""
-
-#     # Algorithm specific arguments
-#     env_id: str = "BeamRiderNoFrameskip-v4"
-#     """the id of the environment"""
-#     total_timesteps: int = 5000000
-#     """total timesteps of the experiments"""
-#     buffer_size: int = int(1e6)
-#     """the replay memory buffer size"""  # smaller than in original paper but evaluation is done only for 100k steps anyway
-#     gamma: float = 0.99
-#     """the discount factor gamma"""
-#     tau: float = 1.0
-#     """target smoothing coefficient (default: 1)"""
-#     batch_size: int = 64
-#     """the batch size of sample from the reply memory"""
-#     learning_starts: int = 2e4
-#     """timestep to start learning"""
-#     policy_lr: float = 3e-4
-#     """the learning rate of the policy network optimizer"""
-#     q_lr: float = 3e-4
-#     """the learning rate of the Q network network optimizer"""
-#     update_frequency: int = 4
-#     """the frequency of training updates"""
-#     target_network_frequency: int = 8000
-#     """the frequency of updates for the target networks"""
-#     alpha: float = 0.2
-#     """Entropy regularization coefficient."""
-#     autotune: bool = True
-#     """automatic tuning of the entropy coefficient"""
-#     target_entropy_scale: float = 0.89
-#     """coefficient for scaling the autotune entropy target"""
-
+from crystal_gym.utils import collate_function
 
 def make_env(env_id, idx, capture_video, run_name, kwargs):
     def thunk():
@@ -178,6 +119,8 @@ class Actor(nn.Module):
             logits = self(x / 255.0)
         elif self.type == "MEGNetRL":
             logits = self(x)
+            if logits.dim() == 1:
+                logits = logits.unsqueeze(0)
         policy_dist = Categorical(logits=logits)
         action = policy_dist.sample()
         # Action probabilities for calculating the adapted soft-Q loss
@@ -334,12 +277,21 @@ def main(args: DictConfig) -> None:
 
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=args.exp.seed)
+    obs = obs.to(device)
     for global_step in range(start_iteration, args.algo.total_timesteps):
         # ALGO LOGIC: put action logic here
         if global_step < args.algo.learning_starts:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
-            actions, _, _ = actor.get_action(obs.to(device))
+            # if obs.lengths_angles.shape[-1] < 7:
+            #     if obs.lengths_angles.dim() == 1:
+            #         obs.lengths_angles = torch.cat((obs.lengths_angles, torch.tensor([args.env.p_hat]).to(device)))
+            #         obs.lengths_angles = obs.lengths_angles.unsqueeze(0) 
+            #     elif obs.lengths_angles.dim() == 2:
+            #         obs.lengths_angles = torch.cat((obs.lengths_angles, torch.tensor([args.env.p_hat]).unsqueeze(0).to(device)), dim = 1)
+            obs = obs.to(device)
+            obs.lengths_angles_focus = obs.lengths_angles_focus.to(device)
+            actions, _, _ = actor.get_action(obs)
             actions = actions.detach().cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
@@ -363,33 +315,47 @@ def main(args: DictConfig) -> None:
         # for idx, trunc in enumerate(truncations):
         #     if trunc:
         #         real_next_obs[idx] = infos["final_observation"][idx]
-        rb.add((obs, real_next_obs, actions, rewards, terminations, infos))
+        obs_dict = envs.graph_to_dict(obs)
+        next_obs_dict = envs.graph_to_dict(real_next_obs)
+        rb.add((obs_dict, next_obs_dict, actions, rewards, terminations, infos))
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
-        obs = next_obs
+        if not terminations:
+            obs = next_obs
+        else:   
+            obs, _ = envs.reset()
+            obs = obs.to(device)
 
         # ALGO LOGIC: training.
         if global_step > args.algo.learning_starts:
             if global_step % args.algo.update_frequency == 0:
                 data = rb.sample()
+                (
+                    observations_sampled,
+                    next_observations_sampled,
+                    actions_sampled,
+                    rewards_sampled,
+                    dones_sampled,
+                ) = data
+
                 # CRITIC training
                 with torch.no_grad():
-                    _, next_state_log_pi, next_state_action_probs = actor.get_action(data.next_observations)
-                    qf1_next_target = qf1_target(data.next_observations)
-                    qf2_next_target = qf2_target(data.next_observations)
+                    _, next_state_log_pi, next_state_action_probs = actor.get_action(next_observations_sampled)
+                    qf1_next_target = qf1_target(next_observations_sampled)
+                    qf2_next_target = qf2_target(next_observations_sampled)
                     # we can use the action probabilities instead of MC sampling to estimate the expectation
                     min_qf_next_target = next_state_action_probs * (
                         torch.min(qf1_next_target, qf2_next_target) - alpha * next_state_log_pi
                     )
                     # adapt Q-target for discrete Q-function
                     min_qf_next_target = min_qf_next_target.sum(dim=1)
-                    next_q_value = data.rewards.flatten() + (1 - data.dones.flatten()) * args.algo.gamma * (min_qf_next_target)
+                    next_q_value = rewards_sampled.flatten() + (1.0 - dones_sampled.flatten().to(torch.float32)) * args.algo.gamma * (min_qf_next_target)
 
                 # use Q-values only for the taken actions
-                qf1_values = qf1(data.observations)
-                qf2_values = qf2(data.observations)
-                qf1_a_values = qf1_values.gather(1, data.actions.long()).view(-1)
-                qf2_a_values = qf2_values.gather(1, data.actions.long()).view(-1)
+                qf1_values = qf1(observations_sampled)
+                qf2_values = qf2(observations_sampled)
+                qf1_a_values = qf1_values.gather(1, actions_sampled.long()).view(-1)
+                qf2_a_values = qf2_values.gather(1, actions_sampled.long()).view(-1)
                 qf1_loss = F.mse_loss(qf1_a_values, next_q_value)
                 qf2_loss = F.mse_loss(qf2_a_values, next_q_value)
                 qf_loss = qf1_loss + qf2_loss
@@ -399,10 +365,10 @@ def main(args: DictConfig) -> None:
                 q_optimizer.step()
 
                 # ACTOR training
-                _, log_pi, action_probs = actor.get_action(data.observations)
+                _, log_pi, action_probs = actor.get_action(observations_sampled)
                 with torch.no_grad():
-                    qf1_values = qf1(data.observations)
-                    qf2_values = qf2(data.observations)
+                    qf1_values = qf1(observations_sampled)
+                    qf2_values = qf2(observations_sampled)
                     min_qf_values = torch.min(qf1_values, qf2_values)
                 # no need for reparameterization, the expectation can be calculated for discrete actions
                 actor_loss = (action_probs * ((alpha * log_pi) - min_qf_values)).mean()

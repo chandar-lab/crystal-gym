@@ -268,7 +268,7 @@ class CrystalGymEnv(gym.Env):
         self.t += 1
         if self.t == self.n_sites:
             terminated = truncated = True
-            self.t = 0
+            # self.t = 0
             reward, bg, error_flag, sim_time = self.compute_reward()
             info['final_info'] = [{'episode':{'r':reward}}]
             info['final_info'][0]['episode']['error_flag'] = error_flag
@@ -298,6 +298,23 @@ class CrystalGymEnv(gym.Env):
                       'num_atoms':num_atoms
                       }
         return state_dict
+    
+    def graph_to_dict(self, observation):
+        """
+        Convert the graph to a dictionary for the RL replay buffer
+        """
+        state = {}
+        focus = observation.focus.to(device = 'cuda')
+        if focus.item() == -10000:
+            focus = torch.tensor([20])
+        state['atomic_number'] = torch.cat([observation.ndata['atomic_number'].to(device = 'cuda'), focus])
+        state['coordinates'] = observation.ndata['position']
+        state['edges'] = observation.edges()
+        state['efeat'] = observation.edata['e_feat']
+        state['etype'] = observation.edata['etype'].squeeze()
+        state['laf'] = observation.lengths_angles_focus.squeeze()
+        # state['index'] = observation.inds
+        return state
     
     def to_struct(self,state_dict):
         """

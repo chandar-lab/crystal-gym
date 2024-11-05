@@ -211,6 +211,11 @@ def main(args: DictConfig) -> None:
             next_done = np.logical_or(terminations, truncations).astype(np.float32)
             rewards[step] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = next_obs.to(device), torch.Tensor([next_done]).to(device)
+            
+            # reset the environments once the episode is over
+            if next_done:
+                next_obs, _ = envs.reset()
+                next_obs = next_obs.to(device)
 
             if "final_info" in infos:
                 for info in infos["final_info"]:
@@ -241,8 +246,8 @@ def main(args: DictConfig) -> None:
 
         # flatten the batch
         # b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)  # Create a batch of graphs
-        lattice_features = torch.stack([obs[i].lengths_angles for i in range(len(obs))])
-        lattice_features = torch.cat((lattice_features, torch.tensor([args.env.p_hat]*lattice_features.shape[0])[:,None]), dim = 1)
+        lattice_features = torch.stack([obs[i].lengths_angles_focus for i in range(len(obs))]).squeeze()
+        # lattice_features = torch.cat((lattice_features, torch.tensor([args.env.p_hat]*lattice_features.shape[0])[:,None]), dim = 1)
         focus_features = torch.stack([obs[i].focus for i in range(len(obs))])
         focus_list_features = torch.stack([obs[i].focus_list for i in range(len(obs))])
 

@@ -113,23 +113,22 @@ def collate_function(batch, p_hat):
 
     for i in range(batch_size):
         data_dict = batch[i]
-        observation, action, next_observation, reward, bandgap, done = data_dict
-    
+        observation, next_observation, action, reward, done, infos = data_dict
         atomic_number_list[i] = observation['atomic_number'][:-1]
         focus_list.append(observation['atomic_number'][-1])
         n_atoms = observation['atomic_number'].shape[0] - 1
-        true_atomic_number_list[i] = observation['true_atomic_number']
-        position_list[i] = observation['coordinates']
-        if observation['laf'].shape[0] == 7:
-            laf_list[i] = torch.cat((observation['laf'], torch.tensor([p_hat]))) 
-        else:
-            laf_list[i] = observation['laf']
+        # true_atomic_number_list[i] = observation['true_atomic_number']
+        position_list[i] = observation['coordinates'].to(device = 'cuda')
+        # if observation['laf'].shape[0] == 7:
+        # laf_list[i] = torch.cat((observation['laf'], torch.tensor([p_hat], device = 'cuda'))) 
+        # else:
+        laf_list[i] = observation['laf']
         edges_u_single =  observation['edges'][0] + sum_n_atoms
         edges_v_single =  observation['edges'][1] + sum_n_atoms
-        edges_cat = torch.cat([edges_u_single[:,None], edges_v_single[:,None]], dim = 1)
+        edges_cat = torch.cat([edges_u_single[:,None], edges_v_single[:,None]], dim = 1).to(device = 'cuda')
         num_edges.append(edges_cat.shape[0])
         # try:
-        to_jimages[i] = observation['etype']
+        to_jimages[i] = observation['etype'].cpu()
         # except:
             # efeat/_list.append(observation['efeat'])
         edges_u[i] = edges_cat[:,0]
@@ -140,18 +139,18 @@ def collate_function(batch, p_hat):
 
         action_list.append(action)
         reward_list.append(reward)
-        bandgap_list.append(bandgap)
+        # bandgap_list.append(bandgap)
         dones_list.append(done)
 
         atomic_number_list_next[i] = next_observation['atomic_number'][:-1]
         focus_list_next.append(next_observation['atomic_number'][-1])
-    edges_cat = torch.cat([torch.cat(edges_u)[:,None], torch.cat(edges_v)[:,None]], dim = 1)
+    
+    edges_cat = torch.cat([torch.cat(edges_u)[:,None].to(device = 'cuda'), torch.cat(edges_v)[:,None].to(device = 'cuda')], dim = 1)
     position = torch.cat(position_list, dim = 0)
     laf_list = torch.stack(laf_list)
-
     # try:
     to_jimages = torch.cat(to_jimages, dim = 0)
-    out = get_pbc_distances(position, edges_cat, lengths = laf_list[:,:3], angles = laf_list[:,3:6], to_jimages = to_jimages, 
+    out = get_pbc_distances(position.cpu(), edges_cat.cpu(), lengths = laf_list[:,:3].cpu(), angles = laf_list[:,3:6].cpu(), to_jimages = to_jimages.cpu(), 
                         num_atoms = n_atoms_list, num_bonds=num_edges, coord_is_cart=True)
     edata = out['distances'] 
     # except:
@@ -159,26 +158,28 @@ def collate_function(batch, p_hat):
 
     g = dgl.graph(data = torch.unbind(edges_cat, dim = 1), num_nodes = sum_n_atoms)
     g.ndata['atomic_number'] = torch.cat(atomic_number_list, dim = 0)
-    g.focus = torch.stack(focus_list)
-    g.ndata['true_atomic_number'] = torch.cat(true_atomic_number_list, dim = 0)
-    g.lengths_angles_focus = laf_list
-    g.edata['e_feat'] = edata
-    g.edata['etype'] = to_jimages
-    g.set_batch_num_nodes(torch.tensor(n_atoms_list))
-    g.set_batch_num_edges(torch.tensor(n_edges_list))
+    g.focus = torch.stack(focus_list).to(device='cuda', dtype = torch.int64)
+    # g.ndata['true_atomic_number'] = torch.cat(true_atomic_number_list, dim = 0)
+    g.lengths_angles_focus = laf_list.to(device='cuda')
+    g.edata['e_feat'] = edata.to(device='cuda')
+    g.edata['etype'] = to_jimages.to(device='cuda')
+    g.set_batch_num_nodes(torch.tensor(n_atoms_list).to(device='cuda'))
+    g.set_batch_num_edges(torch.tensor(n_edges_list).to(device='cuda'))
 
     g_next = dgl.graph(data = torch.unbind((edges_cat), dim = 1), num_nodes = sum_n_atoms)
     g_next.ndata['atomic_number'] = torch.cat(atomic_number_list_next, dim = 0)
-    g_next.focus = torch.stack(focus_list_next)
-    g_next.ndata['true_atomic_number'] = torch.cat(true_atomic_number_list, dim = 0)
+    g_next.focus = torch.stack(focus_list_next).to(device='cuda', dtype = torch.int64)
+    # g_next.ndata['true_atomic_number'] = torch.cat(true_atomic_number_list, dim = 0)
     g_next.ndata['position'] = torch.cat(position_list, dim = 0)
-    g_next.lengths_angles_focus = laf_list
-    g_next.edata['e_feat'] = edata
-    g_next.edata['etype'] = to_jimages
-    g_next.set_batch_num_nodes(torch.tensor(n_atoms_list))
-    g_next.set_batch_num_edges(torch.tensor(n_edges_list))
+    g_next.lengths_angles_focus = laf_list.to(device='cuda')
+    g_next.edata['e_feat'] = edata.to(device='cuda')
+    g_next.edata['etype'] = to_jimages.to(device='cuda')
+    g_next.set_batch_num_nodes(torch.tensor(n_atoms_list).to(device='cuda'))
+    g_next.set_batch_num_edges(torch.tensor(n_edges_list).to(device='cuda'))
 
-    return g, torch.tensor(action_list), g_next, torch.tensor(reward_list), torch.tensor(bandgap_list), torch.tensor(dones_list)
+    g = g.to(device='cuda')
+    g_next = g_next.to(device='cuda')
+    return g, g_next, torch.tensor(action_list).to(device = 'cuda') , torch.tensor(reward_list).to(device = 'cuda'), torch.tensor(dones_list).to(device='cuda')
 
 
 def collate_function_eval(batch, p_hat):
