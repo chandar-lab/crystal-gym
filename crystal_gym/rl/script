@@ -8,6 +8,8 @@
 #SBATCH --time=3-00:00:00
 #SBATCH --mem=32Gb
 #SBATCH --exclude=cn-k[001-002]
+#SBATCH --requeue
+#SBATCH --signal=B:TERM@300
 
 module load anaconda/3
 module load cuda/12.2.2

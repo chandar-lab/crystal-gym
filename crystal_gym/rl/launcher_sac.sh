@@ -19,7 +19,7 @@ for prop in bm band_gap
             do 
                 for seed in 10 20 30
                 do
-                    sbatch --constraint ampere script SAC-NEW-${prop^^}-$ind SAC-$prop-$ind sac-basic-$prop-$ind $seed $seed $ind $prop $p_hat $tstress $tprnfor $occupations
+                    sbatch --constraint ampere --job-name="SAC-NEW-${prop^^}-$ind" script SAC SAC-$prop-$ind sac-basic-$prop-$ind $seed $seed $ind $prop $p_hat $tstress $tprnfor $occupations
                 done
             done
     done 

@@ -24,7 +24,7 @@ algo:
   gamma: 0.99
   tau: 1.0 #target smoothing coefficient (default: 1)
   batch_size: 64
-  learning_starts: 5000 # timestep to start learning
+  learning_starts: 1000 # timestep to start learning
   policy_lr: 3e-4
   q_lr: 3e-4
   update_frequency: 4 # the frequency of training updates

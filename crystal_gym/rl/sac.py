@@ -15,12 +15,21 @@ from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 from crystal_design.agents import MEGNetRL
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from crystal_gym.env import CrystalGymEnv
 from copy import deepcopy
 from torchrl.data import ReplayBuffer, ListStorage
 from functools import partial
 from crystal_gym.utils import collate_function
+import signal
+import wandb
+
+caught_signal = False
+
+def catch_signal(sig, frame):
+    global caught_signal
+    caught_signal = True
+
 
 def make_env(env_id, idx, capture_video, run_name, kwargs):
     def thunk():
@@ -132,32 +141,11 @@ class Actor(nn.Module):
 @hydra.main(version_base = None, config_path="../config", config_name="sac")
 def main(args: DictConfig) -> None:
 
-    import stable_baselines3 as sb3
 
-    if sb3.__version__ < "2.0":
-        raise ValueError(
-            """Ongoing migration: run the following command to install the new dependencies:
+    signal.signal(signal.SIGTERM, catch_signal)
 
-            poetry run pip install "stable_baselines3==2.0.0a1" "gymnasium[atari,accept-rom-license]==0.28.1"  "ale-py==0.8.1" 
-            """
-        )
     run_name = f"{args.algo.env_id}__{args.exp.exp_name}__{args.exp.seed}"
-    if args.exp.track:
-        import wandb
-        wandb.init(
-            project=args.wandb.wandb_project_name,
-            sync_tensorboard=True,
-            config=dict(args),
-            name=run_name,
-            monitor_gym=True,
-            save_code=True,
-            resume="allow",
-        )
-    writer = SummaryWriter(f"runs/{run_name}")
-    writer.add_text(
-        "hyperparameters",
-        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
-    )
+
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.exp.seed)
@@ -260,7 +248,7 @@ def main(args: DictConfig) -> None:
             project=args.wandb.wandb_project_name,
             group=args.wandb.wandb_group,
             sync_tensorboard=True,
-            config=dict(args),
+            config=OmegaConf.to_container(args, resolve=True),
             name=run_name,
             monitor_gym=True,
             save_code=True,
@@ -283,12 +271,6 @@ def main(args: DictConfig) -> None:
         if global_step < args.algo.learning_starts:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
-            # if obs.lengths_angles.shape[-1] < 7:
-            #     if obs.lengths_angles.dim() == 1:
-            #         obs.lengths_angles = torch.cat((obs.lengths_angles, torch.tensor([args.env.p_hat]).to(device)))
-            #         obs.lengths_angles = obs.lengths_angles.unsqueeze(0) 
-            #     elif obs.lengths_angles.dim() == 2:
-            #         obs.lengths_angles = torch.cat((obs.lengths_angles, torch.tensor([args.env.p_hat]).unsqueeze(0).to(device)), dim = 1)
             obs = obs.to(device)
             obs.lengths_angles_focus = obs.lengths_angles_focus.to(device)
             actions, _, _ = actor.get_action(obs)
@@ -337,7 +319,7 @@ def main(args: DictConfig) -> None:
                     rewards_sampled,
                     dones_sampled,
                 ) = data
-
+                rewards_sampled = rewards_sampled.to(dtype=torch.float32)
                 # CRITIC training
                 with torch.no_grad():
                     _, next_state_log_pi, next_state_action_probs = actor.get_action(next_observations_sampled)
@@ -406,7 +388,7 @@ def main(args: DictConfig) -> None:
                 if args.algo.autotune:
                     writer.add_scalar("losses/alpha_loss", alpha_loss.item(), global_step)
 
-        if global_step % args.exp.save_freq == 0:
+        if (global_step % args.exp.save_freq == 0 or caught_signal) and global_step > 0:
             states = {"actor": actor.state_dict(), "qf1": qf1.state_dict(), "qf2": qf2.state_dict(), "qf1_target": qf1_target.state_dict(), "qf2_target": qf2_target.state_dict(), "actor_optimizer": actor_optimizer.state_dict(), "q_optimizer": q_optimizer.state_dict(), "rb": rb.state_dict()}
             if args.algo.autotune:
                 states["a_optimizer"] = a_optimizer.state_dict()

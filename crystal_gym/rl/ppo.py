@@ -14,11 +14,17 @@ import torch.optim as optim
 import tyro
 from torch.distributions.categorical import Categorical
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from torch.utils.tensorboard import SummaryWriter
 from crystal_gym.agents import MEGNetRL
 from crystal_gym.env import CrystalGymEnv
+import signal
 
+caught_signal = False
+
+def catch_signal(sig, frame):
+    global caught_signal
+    caught_signal = True
 
 def make_env(env_id, idx, capture_video, run_name, kwargs):
     def thunk():
@@ -86,6 +92,9 @@ class Agent(nn.Module):
 @hydra.main(version_base = None, config_path="../config", config_name="ppo")
 def main(args: DictConfig) -> None:
     # args = tyro.cli(Args)
+
+    signal.signal(signal.SIGTERM, catch_signal)
+
     batch_size = int(args.algo.num_envs * args.algo.num_steps)
     minibatch_size = int(batch_size // args.algo.num_minibatches)
     num_iterations = args.algo.total_timesteps // batch_size
@@ -170,7 +179,7 @@ def main(args: DictConfig) -> None:
             project=args.wandb.wandb_project_name,
             group=args.wandb.wandb_group,
             sync_tensorboard=True,
-            config=dict(args),
+            config=OmegaConf.to_container(args, resolve=True),
             name=run_name,
             monitor_gym=True,
             save_code=True,
@@ -321,7 +330,7 @@ def main(args: DictConfig) -> None:
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
-        if iteration % args.exp.save_freq == 0:
+        if iteration % args.exp.save_freq == 0 or caught_signal:
             variables = {"actions": actions, "values": values, "logprobs": logprobs, "rewards": rewards, "dones": dones}
             states = {"agent": agent.state_dict(), "optimizer": optimizer.state_dict()}
             run_state = {
