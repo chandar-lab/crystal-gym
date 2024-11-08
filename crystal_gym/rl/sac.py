@@ -13,7 +13,7 @@ import torch.optim as optim
 from stable_baselines3.common.buffers import ReplayBuffer
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
-from crystal_design.agents import MEGNetRL
+from crystal_gym.agents import MEGNetRL
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from crystal_gym.env import CrystalGymEnv
@@ -135,7 +135,7 @@ class Actor(nn.Module):
         # Action probabilities for calculating the adapted soft-Q loss
         action_probs = policy_dist.probs
         log_prob = F.log_softmax(logits, dim=1)
-        
+
         return action, log_prob, action_probs
 
 @hydra.main(version_base = None, config_path="../config", config_name="sac")
@@ -184,7 +184,7 @@ def main(args: DictConfig) -> None:
     else:
         alpha = args.algo.alpha
 
-    rb = ReplayBuffer(   
+    rb = ReplayBuffer(
             storage=ListStorage(max_size=args.algo.buffer_size),
             batch_size = args.algo.batch_size,
             collate_fn = partial(collate_function, p_hat = args.env.p_hat),
@@ -201,7 +201,7 @@ def main(args: DictConfig) -> None:
     # )
     start_time = time.time()
 
-    # SAVE AND LOAD 
+    # SAVE AND LOAD
     save_path = os.path.join(os.getcwd(), "models", run_name)
     try:
         start_iteration = 0
@@ -217,7 +217,7 @@ def main(args: DictConfig) -> None:
             except:
                 ind = indices[-2]
                 run_state = torch.load(os.path.join(save_path, f"ckpt_{ind}.pt"))
-            
+
             # start_iteration = run_state["iteration"]
             actor.load_state_dict(run_state["states"]["actor"])
             qf1.load_state_dict(run_state["states"]["qf1"])
@@ -229,6 +229,7 @@ def main(args: DictConfig) -> None:
 
             if args.algo.autotune:
                 a_optimizer.load_state_dict(run_state["states"]["a_optimizer"])
+                log_alpha.data[0] = run_state["states"]["log_alpha"][0]
 
             rb_state = run_state["states"]["rb"]
             rb.extend(rb_state["_storage"]["_storage"])
@@ -304,7 +305,7 @@ def main(args: DictConfig) -> None:
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         if not terminations:
             obs = next_obs
-        else:   
+        else:
             obs, _ = envs.reset()
             obs = obs.to(device)
 
@@ -392,7 +393,8 @@ def main(args: DictConfig) -> None:
             states = {"actor": actor.state_dict(), "qf1": qf1.state_dict(), "qf2": qf2.state_dict(), "qf1_target": qf1_target.state_dict(), "qf2_target": qf2_target.state_dict(), "actor_optimizer": actor_optimizer.state_dict(), "q_optimizer": q_optimizer.state_dict(), "rb": rb.state_dict()}
             if args.algo.autotune:
                 states["a_optimizer"] = a_optimizer.state_dict()
-            
+                states["log_alpha"]  = log_alpha.item()
+
             run_state = {
                             "run_name": run_name,
                             "run_id": run_id,

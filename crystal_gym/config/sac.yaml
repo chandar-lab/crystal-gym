@@ -18,9 +18,9 @@ wandb:
   capture_video: False # whether to capture videos of the agent performances (check out `videos` folder)
 
 algo:
-  env_id: CrystalGymEnv-v0 # the id of the environment# 
+  env_id: CrystalGymEnv-v0 # the id of the environment#
   total_timesteps: 500000 # total timesteps of the experiments#
-  buffer_size: 200000 # the size of the replay buffer#
+  buffer_size: 2000 # the size of the replay buffer # test 2000 and 15000
   gamma: 0.99
   tau: 1.0 #target smoothing coefficient (default: 1)
   batch_size: 64
@@ -28,7 +28,7 @@ algo:
   policy_lr: 3e-4
   q_lr: 3e-4
   update_frequency: 4 # the frequency of training updates
-  target_network_frequency: 1000
+  target_network_frequency: 500 # test 500, 100
   alpha: 0.2 # Entropy regularization coefficient.
-  autotune: True # automatic tuning of the entropy coefficient
+  autotune: False # automatic tuning of the entropy coefficient
   target_entropy_scale: 0.89 # coefficient for scaling the autotune entropy target
