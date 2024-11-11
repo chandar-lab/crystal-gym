@@ -171,7 +171,7 @@ class CrystalGymEnv(gym.Env):
                 else:
                     bm = float(lines[2].split()[7])
             except ValueError:
-                return None, 1
+                return None, 2
 
         return bm, 0
 
