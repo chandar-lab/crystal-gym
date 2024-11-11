@@ -16,7 +16,7 @@ from pymatgen.core import Structure, Lattice
 from crystal_gym.utils.data_utils import build_crystal, build_crystal_graph
 from crystal_gym.utils.variables import ELEMENTS_SMALL, SPECIES_IND_INV, SPECIES_IND_SMALL
 from dgl.traversal import bfs_nodes_generator
-from crystal_gym.utils.variables import CUBIC_INDS_VAL
+from crystal_gym.utils.variables import CUBIC_INDS_VAL, CUBIC_VAL_FIVE
 import subprocess
 
 RY_CONST = 13.605691932782346
@@ -76,8 +76,10 @@ class CrystalGymEnv(gym.Env):
         info = {}
         if self.env_options['mode'] == 'single':
             self.sample_ind = self.env_options['index']
-        elif self.env_options['mode'] == 'cubic':
+        elif self.env_options['mode'] == 'cubic-all':
             self.sample_ind = np.random.choice(CUBIC_INDS_VAL)
+        elif self.env_options['mode'] == 'cubic-five':  
+            self.sample_ind = np.random.choice(CUBIC_VAL_FIVE)
         
         cif_string = self.data.loc[self.sample_ind]['cif']
         canonical_crystal = build_crystal(cif_string)
@@ -162,10 +164,15 @@ class CrystalGymEnv(gym.Env):
         with open(os.path.join('calculations', self.run_name, 'ev.txt'), 'r') as f:
             lines = f.readlines()
             string = lines[2].split()[7]
-            if 'GPa' in string:
-                bm = float(lines[2].split()[6].split('=')[1])
-            else:
-                bm = float(lines[2].split()[7])
+
+            try:
+                if 'GPa' in string:
+                    bm = float(lines[2].split()[6].split('=')[1])
+                else:
+                    bm = float(lines[2].split()[7])
+            except ValueError:
+                return None, 1
+
         return bm, 0
 
     
