@@ -14,7 +14,7 @@ from ase.calculators.espresso import Espresso, EspressoProfile
 from pymatgen.io.vasp.inputs import Kpoints
 from pymatgen.core import Structure, Lattice
 from crystal_gym.utils.data_utils import build_crystal, build_crystal_graph
-from crystal_gym.utils.variables import ELEMENTS_SMALL, SPECIES_IND_INV, SPECIES_IND_SMALL
+from crystal_gym.utils.variables import ELEMENTS_SMALL, SPECIES_IND_INV, SPECIES_IND_SMALL, SPACE_GROUP_TYPE
 from dgl.traversal import bfs_nodes_generator
 from crystal_gym.utils.variables import CUBIC_INDS_VAL, CUBIC_VAL_FIVE
 import subprocess
@@ -82,6 +82,7 @@ class CrystalGymEnv(gym.Env):
             self.sample_ind = np.random.choice(CUBIC_VAL_FIVE)
         
         cif_string = self.data.loc[self.sample_ind]['cif']
+        self.space_grp = self.data.loc[self.sample_ind]['spacegroup.number']
         canonical_crystal = build_crystal(cif_string)
         graph = build_crystal_graph(canonical_crystal, SPECIES_IND_INV)
 
@@ -151,9 +152,10 @@ class CrystalGymEnv(gym.Env):
             for v, e in zip(lengths, energies):
                 f.write(f"{v:.6f} {e:.6f}\n")
         
+        spg_type = SPACE_GROUP_TYPE[self.space_grp]
         with open(os.path.join('calculations', self.run_name, 'ev.in'), 'w') as f:
             f.write("Ang\n")
-            f.write("sc\n")  # Use 'noncubic' to treat input as volumes
+            f.write(f"{spg_type}\n")  # Use 'noncubic' to treat input as volumes
             f.write("4\n")  # Murnaghan EOS
             f.write(os.path.join('calculations', self.run_name, 'length_energy.dat') + "\n")
             f.write(os.path.join('calculations', self.run_name, 'ev.txt') + "\n")
