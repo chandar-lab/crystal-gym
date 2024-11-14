@@ -26,4 +26,4 @@ SPECIES_IND_INV = {mendeleev.element(ELEMENTS[i]).atomic_number:i for i in range
 SPECIES_IND_SMALL = {i:mendeleev.element(ELEMENTS_SMALL[i]).atomic_number for i in range(len(ELEMENTS_SMALL))}
 SPECIES_IND_SMALL_INV = {mendeleev.element(ELEMENTS_SMALL[i]).atomic_number:i for i in range(len(ELEMENTS_SMALL))}
 
-SPACE_GROUP_TYPE = {221:'sc', 225:'fcc', 229: 'bcc'}
+SPACE_GROUP_TYPE = {221:'sc', 225:'fcc', 229: 'bcc', 215: 'sc', 200: 'sc'}
