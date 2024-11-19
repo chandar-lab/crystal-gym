@@ -14,7 +14,7 @@ from ase.calculators.espresso import Espresso, EspressoProfile
 from pymatgen.io.vasp.inputs import Kpoints
 from pymatgen.core import Structure, Lattice
 from crystal_gym.utils.data_utils import build_crystal, build_crystal_graph
-from crystal_gym.utils.variables import ELEMENTS_SMALL, SPECIES_IND_INV, SPECIES_IND_SMALL, SPACE_GROUP_TYPE
+from crystal_gym.utils.variables import ELEMENTS_SMALL, SPECIES_IND_INV, SPECIES_IND_SMALL, SPACE_GROUP_TYPE, SPECIES_IND_SMALL_INV
 from dgl.traversal import bfs_nodes_generator
 from crystal_gym.utils.variables import CUBIC_INDS_VAL, CUBIC_VAL_FIVE
 import subprocess
@@ -84,7 +84,7 @@ class CrystalGymEnv(gym.Env):
         cif_string = self.data.loc[self.sample_ind]['cif']
         self.space_grp = self.data.loc[self.sample_ind]['spacegroup.number']
         canonical_crystal = build_crystal(cif_string)
-        graph = build_crystal_graph(canonical_crystal, SPECIES_IND_INV)
+        graph = build_crystal_graph(canonical_crystal, SPECIES_IND_SMALL)
 
         self.n_sites = graph.num_nodes()
         self.bfs_start = np.random.choice(self.n_sites) 
@@ -124,7 +124,44 @@ class CrystalGymEnv(gym.Env):
             self.err_flag = 1
 
         return state, info
-    
+
+    def calculate_sm(self, atoms):
+        """
+        Calculate the shear modulus.
+        """
+
+        strains = np.linspace(-0.02, 0.02, 5) # 5 points
+
+        energies = []
+        stresses = []
+
+        for strain in strains:
+            deformed_atoms = atoms.copy()
+            cell = deformed_atoms.get_cell()
+            
+            # Apply shear strain (e.g., xy component)
+            deformation = np.eye(3)
+            deformation[0, 1] = strain
+            cell = np.dot(cell, deformation)
+            
+            deformed_atoms.set_cell(cell, scale_atoms=True)
+            deformed_atoms.calc = atoms.calc
+            
+            energy = deformed_atoms.get_potential_energy()
+            stress = deformed_atoms.get_stress()
+            
+            energies.append(energy)
+            stresses.append(stress)
+        
+        # Calculate shear modulus (C44 for cubic crystals)
+        # volume = atoms.get_volume()
+        shear_stresses = [stress[3] for stress in stresses]  # xy component
+        
+        slope, _ = np.polyfit(strains, shear_stresses, 1)
+        shear_modulus = slope 
+        
+        return shear_modulus
+
     def calculate_bm(self, atoms, celldm):
         """
         Calculate the bulk modulus.
@@ -206,9 +243,18 @@ class CrystalGymEnv(gym.Env):
             if error_flag == 0:
                 reward = - np.abs(self.env_options['p_hat'] - bm) / self.env_options['p_hat']
                 sim_time = end_time - start_time
+                if self.env_options['reward_min'] and reward < self.env_options['reward_min']:
+                        reward = self.env_options['reward_min']
                 return reward, bm, error_flag, sim_time
             else:
                 return -5.0, None, error_flag, None
+        elif self.env_options['property'] == 'sm':
+            start_time = time.time()
+            sm = self.calculate_sm(atoms)
+            end_time = time.time()
+            reward = - np.abs(self.env_options['p_hat'] - sm) / self.env_options['p_hat']
+            sim_time = end_time - start_time
+            return reward, sm, error_flag, sim_time
         else:
             try:
                 start_time = time.time()

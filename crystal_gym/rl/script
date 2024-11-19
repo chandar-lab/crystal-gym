@@ -1,0 +1,25 @@
+#!/bin/bash
+#SBATCH --job-name=dft-BM-2190
+#SBATCH --output=output/experiment-%A.%a.out
+#SBATCH --error=error/experiment-%A.%a.err
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=2
+#SBATCH --gpus=a100l:1
+#SBATCH --time=3-00:00:00
+#SBATCH --mem=32Gb
+#SBATCH --exclude=cn-k[001-002]
+#SBATCH --requeue
+#SBATCH --signal=B:TERM@300
+
+module load anaconda/3
+module load cuda/12.2.2
+conda activate crysrl
+#conda init bash
+module use --priority 100 /home/mila/p/prashant.govindarajan/pkgs/nvhpc_2023_237_Linux_x86_64_cuda_multi/modulefiles
+module load nvhpc-hpcx-cuda12
+export NVHPC_CUDA_HOME="$CUDA_HOME"
+export OMP_NUM_THREADS=2
+
+# srun python ppo.py  wandb.wandb_project_name=$1 wandb.wandb_group=$2 exp.exp_name=$3 exp.seed=$4 env.seed=$5 env.index=$6 env.property=$7 env.p_hat=$8 qe.tstress=$9 qe.tprnfor=${10} qe.occupations=${11} #env.mode=cubic-five
+# srun python sac.py  wandb.wandb_project_name=$1 wandb.wandb_group=$2 exp.exp_name=$3 exp.seed=$4 env.seed=$5 env.index=$6 env.property=$7 env.p_hat=$8 qe.tstress=$9 qe.tprnfor=${10} qe.occupations=${11} algo.buffer_size=${12} algo.target_network_frequency=${13}
+srun python dqn.py  wandb.wandb_project_name=$1 wandb.wandb_group=$2 exp.exp_name=$3 exp.seed=$4 env.seed=$5 env.index=$6 env.property=$7 env.p_hat=$8 qe.tstress=$9 qe.tprnfor=${10} qe.occupations=${11} algo.buffer_size=${12} algo.target_network_frequency=${13}

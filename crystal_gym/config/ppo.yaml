@@ -8,14 +8,14 @@ exp:
   torch_deterministic: True # if toggled, `torch.backends.cudnn.deterministic=False`
   cuda: True #if toggled, cuda will be enabled by default
   track: True #if toggled, this experiment will be tracked with Weights and Biases
-  capture_video: False
+  capture_video: False # whether to capture videos of the agent performances (check out `videos` folder)
   save_freq: 50 # the frequency of saving the model
 
 wandb:
   mode: online
   wandb_project_name: PPO # the wandb's project name
   wandb_group: PPO-DEFAULT # the entity (team) of wandb's project
-  capture_video: False # whether to capture videos of the agent performances (check out `videos` folder)
+  capture_video: False
 
 # Algorithm specific arguments
 algo:
@@ -23,7 +23,7 @@ algo:
   total_timesteps: 500000 # total timesteps of the experiments# 
   learning_rate: 2.5e-4 # the learning rate of the optimizer# 
   num_envs: 1 # the number of parallel game environments# 
-  num_steps: 32 # the number of steps to run in each environment per policy rollout# 
+  num_steps: 32 # the number of steps to run in each environment per policy rollout# #16 
   anneal_lr: True # Toggle learning rate annealing for policy and value networks# 
   gamma:  0.99 # the discount factor gamma# 
   gae_lambda: 0.95 # the lambda for the general advantage estimation# 
@@ -32,9 +32,8 @@ algo:
   norm_adv: True # Toggles advantages normalization# 
   clip_coef: 0.2 # the surrogate clipping coefficient# 
   clip_vloss: True # Toggles whether or not to use a clipped loss for the value function, as per the paper.# 
-  ent_coef: 0.01 # coefficient of the entropy# 
+  ent_coef: 0.01 # coefficient of the entropy#  Try 0.1
   vf_coef: 0.5 # coefficient of the value function# ; also check 1.0
   max_grad_norm: 0.5 # the maximum norm for the gradient clipping# 
   target_kl: null # the target KL divergence threshold# 
-
   

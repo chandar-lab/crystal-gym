@@ -10,7 +10,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from stable_baselines3.common.buffers import ReplayBuffer
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 from crystal_gym.agents import MEGNetRL

@@ -179,7 +179,11 @@ def collate_function(batch, p_hat):
 
     g = g.to(device='cuda')
     g_next = g_next.to(device='cuda')
-    return g, g_next, torch.tensor(action_list).to(device = 'cuda') , torch.tensor(reward_list).to(device = 'cuda'), torch.tensor(dones_list).to(device='cuda')
+    action_list = torch.tensor(np.array(action_list)).to(device = 'cuda')
+    reward_list = torch.tensor(np.array(reward_list)).to(device = 'cuda')
+    dones_list = torch.tensor(np.array(dones_list)).to(device = 'cuda')
+
+    return g, g_next, action_list, reward_list, dones_list
 
 
 def collate_function_eval(batch, p_hat):
