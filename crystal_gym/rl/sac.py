@@ -12,7 +12,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
-from crystal_gym.agents import MEGNetRL
+from crystal_gym.agents import MEGNetRL, CHGNetRL
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from crystal_gym.env import CrystalGymEnv
@@ -75,6 +75,8 @@ class SoftQNetwork(nn.Module):
         elif type == "MEGNetRL":
             self.qnet = MEGNetRL(num_actions = envs.single_action_space.n,
                                  ntypes_state =  envs.single_action_space.n)
+        elif type == "CHGNetRL":
+            self.qnet = CHGNetRL(num_actions = envs.single_action_space.n)
         self.type = type
 
     def forward(self, x):
@@ -84,6 +86,12 @@ class SoftQNetwork(nn.Module):
             q_vals = self.fc_q(x)
         elif self.type == "MEGNetRL":
             q_vals = self.qnet(x,x.edata['e_feat'], x.ndata['atomic_number'], x.lengths_angles_focus)
+        elif self.type == "CHGNetRL":
+            if type(x) == list:
+                x = [self.qnet.chgnet.graph_converter(g).to(self.device) for g in x]
+            else:
+                x = [self.qnet.chgnet.graph_converter(x).to(self.device)]
+            q_vals = self.qnet(x)
         return q_vals
 
 
@@ -110,6 +118,8 @@ class Actor(nn.Module):
         if type == "MEGNetRL":
             self.actor = MEGNetRL(num_actions = envs.single_action_space.n,
                                   ntypes_state =  envs.single_action_space.n)
+        elif type == "CHGNetRL":
+            self.actor = CHGNetRL(num_actions = envs.single_action_space.n)
         self.type = type
 
     def forward(self, x):
@@ -119,6 +129,12 @@ class Actor(nn.Module):
             logits = self.fc_logits(x)
         elif self.type == "MEGNetRL":
             logits = self.actor(x,x.edata['e_feat'], x.ndata['atomic_number'], x.lengths_angles_focus)
+        elif self.type == "CHGNetRL":
+            if type(x) == list:
+                x = [self.actor.chgnet.graph_converter(g).to(self.device) for g in x]
+            else:
+                x = [self.actor.chgnet.graph_converter(x).to(self.device)]
+            logits = self.actor(x)
 
         return logits
 
@@ -126,6 +142,10 @@ class Actor(nn.Module):
         if self.type == "mlp":
             logits = self(x / 255.0)
         elif self.type == "MEGNetRL":
+            logits = self(x)
+            if logits.dim() == 1:
+                logits = logits.unsqueeze(0)
+        elif self.type == "CHGNetRL":
             logits = self(x)
             if logits.dim() == 1:
                 logits = logits.unsqueeze(0)
@@ -160,16 +180,18 @@ def main(args: DictConfig) -> None:
 
     kwargs = {'env':dict(args.env), 'qe': dict(args.qe)}
     kwargs['env']['run_name'] = run_name
+    kwargs['env']['agent'] = args.algo.agent
     envs = make_env(args.algo.env_id, 0, args.exp.capture_video, run_name, kwargs)()
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
-    actor = Actor(envs, type = "MEGNetRL").to(device)
-    qf1 = SoftQNetwork(envs, type = "MEGNetRL").to(device)
-    qf2 = SoftQNetwork(envs, type = "MEGNetRL").to(device)
-    qf1_target = SoftQNetwork(envs, type = "MEGNetRL").to(device)
-    qf2_target = SoftQNetwork(envs, type = "MEGNetRL").to(device)
+    actor = Actor(envs, type = args.algo.agent).to(device)
+    qf1 = SoftQNetwork(envs, type = args.algo.agent).to(device)
+    qf2 = SoftQNetwork(envs, type = args.algo.agent).to(device)
+    qf1_target = SoftQNetwork(envs, type = args.algo.agent).to(device)
+    qf2_target = SoftQNetwork(envs, type = args.algo.agent).to(device)
     qf1_target.load_state_dict(qf1.state_dict())
     qf2_target.load_state_dict(qf2.state_dict())
+
     # TRY NOT TO MODIFY: eps=1e-4 increases numerical stability
     q_optimizer = optim.Adam(list(qf1.parameters()) + list(qf2.parameters()), lr=args.algo.q_lr, eps=1e-4)
     actor_optimizer = optim.Adam(list(actor.parameters()), lr=args.algo.policy_lr, eps=1e-4)
@@ -186,7 +208,7 @@ def main(args: DictConfig) -> None:
     rb = ReplayBuffer(
             storage=ListStorage(max_size=args.algo.buffer_size),
             batch_size = args.algo.batch_size,
-            collate_fn = partial(collate_function, p_hat = args.env.p_hat),
+            collate_fn = partial(collate_function, p_hat = args.env.p_hat, agent = args.algo.agent),
             pin_memory = True,
             prefetch = 16,
         )
@@ -265,14 +287,16 @@ def main(args: DictConfig) -> None:
 
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=args.exp.seed)
-    obs = obs.to(device)
+    if args.algo.agent == "MEGNetRL":
+        obs = obs.to(device)
     for global_step in range(start_iteration, args.algo.total_timesteps):
         # ALGO LOGIC: put action logic here
         if global_step < args.algo.learning_starts:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
-            obs = obs.to(device)
-            obs.lengths_angles_focus = obs.lengths_angles_focus.to(device)
+            if args.algo.agent == "MEGNetRL":
+                obs = obs.to(device)
+                obs.lengths_angles_focus = obs.lengths_angles_focus.to(device)
             actions, _, _ = actor.get_action(obs)
             actions = actions.detach().cpu().numpy()
 
@@ -297,16 +321,19 @@ def main(args: DictConfig) -> None:
         # for idx, trunc in enumerate(truncations):
         #     if trunc:
         #         real_next_obs[idx] = infos["final_observation"][idx]
-        obs_dict = envs.graph_to_dict(obs)
-        next_obs_dict = envs.graph_to_dict(real_next_obs)
-        rb.add((obs_dict, next_obs_dict, actions, rewards, terminations, infos))
-
+        if args.algo.agent == "MEGNetRL":
+            obs_dict = envs.graph_to_dict(obs)
+            next_obs_dict = envs.graph_to_dict(real_next_obs)
+            rb.add((obs_dict, next_obs_dict, actions, rewards, terminations, infos))
+        elif args.algo.agent == "CHGNetRL":
+            rb.add((obs.as_dict(), real_next_obs.as_dict(), actions, rewards, terminations, infos))
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         if not terminations:
             obs = next_obs
         else:
             obs, _ = envs.reset()
-            obs = obs.to(device)
+            if args.algo.agent == "MEGNetRL":
+                obs = obs.to(device)
 
         # ALGO LOGIC: training.
         if global_step > args.algo.learning_starts:

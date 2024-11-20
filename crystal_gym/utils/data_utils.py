@@ -10,6 +10,10 @@ from pymatgen.core.lattice import Lattice
 from pymatgen.analysis.graphs import StructureGraph
 from pymatgen.analysis import local_env
 
+from chgnet.model import CHGNet
+
+
+
 
 CrystalNN = local_env.CrystalNN(distance_cutoffs=None, x_diff_weight=-1, porous_adjustment=False)
 def get_pbc_distances(
@@ -80,12 +84,11 @@ def build_crystal(crystal_str, niggli=True, primitive=False):
 
 def build_crystal_graph(crystal, 
                         species_ind, 
-                        graph_method='crystalnn'
-                        substitution = False,):
+                        graph_method='crystalnn',
+                        substitution = False):
     """
     Source: https://github.com/txie-93/cdvae/tree/main/cdvae
     """
-
     if graph_method == 'crystalnn':
         crystal_graph = StructureGraph.with_local_env_strategy(
             crystal, CrystalNN)
@@ -93,7 +96,6 @@ def build_crystal_graph(crystal,
         pass
     else:
         raise NotImplementedError
-
     frac_coords = crystal.frac_coords
     true_atom_types = crystal.atomic_numbers
     # true_atom_types = torch.tensor([species_ind[i] for i in crystal.atomic_numbers])
@@ -104,7 +106,7 @@ def build_crystal_graph(crystal,
     coords = frac_to_cart_coords(frac_coords, lengths, angles, num_atoms)
 
     assert np.allclose(crystal.lattice.matrix,
-                       lattice_params_to_matrix(*lengths, *angles))
+                    lattice_params_to_matrix(*lengths, *angles))
 
     edge_indices, to_jimages = [], []
     if graph_method != 'none':
@@ -124,6 +126,7 @@ def build_crystal_graph(crystal,
     edge_indices = torch.tensor(np.array(edge_indices))
     if substitution:
         g.ndata['atomic_number'] = torch.tensor(np.random.choice(18, num_atoms))
+        
     else:
         g.ndata['atomic_number'] = torch.ones((num_atoms)) * 88
     g.ndata['true_atomic_number'] = torch.tensor(true_atom_types) #.to(device = 'cuda:0')  ## 56 vocab size + 1 blank slot 
@@ -132,6 +135,7 @@ def build_crystal_graph(crystal,
     g.edata['to_jimages'] = torch.tensor(to_jimages)
     g.lengths = torch.tensor(lengths)
     g.angles = torch.tensor(angles)
+
     return g 
 
 def frac_to_cart_coords(

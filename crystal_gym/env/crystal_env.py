@@ -17,6 +17,7 @@ from crystal_gym.utils.data_utils import build_crystal, build_crystal_graph
 from crystal_gym.utils.variables import ELEMENTS_SMALL, SPECIES_IND_INV, SPECIES_IND_SMALL, SPACE_GROUP_TYPE, SPECIES_IND_SMALL_INV
 from dgl.traversal import bfs_nodes_generator
 from crystal_gym.utils.variables import CUBIC_INDS_VAL, CUBIC_VAL_FIVE
+from pymatgen.core import Element
 import subprocess
 
 RY_CONST = 13.605691932782346
@@ -62,8 +63,10 @@ class CrystalGymEnv(gym.Env):
                 pseudo_dir = pseudo_dir,
             )
         
+        self.agent = self.env_options['agent']
         self.state, _ = self.reset(self.env_options['seed'], {})
         self.t = 0
+
 
     def reset(self, 
             seed = 0, 
@@ -84,7 +87,8 @@ class CrystalGymEnv(gym.Env):
         cif_string = self.data.loc[self.sample_ind]['cif']
         self.space_grp = self.data.loc[self.sample_ind]['spacegroup.number']
         canonical_crystal = build_crystal(cif_string)
-        graph = build_crystal_graph(canonical_crystal, SPECIES_IND_SMALL)
+
+        graph = build_crystal_graph(canonical_crystal, SPECIES_IND_SMALL, substitution = self.env_options['substitution'])
 
         self.n_sites = graph.num_nodes()
         self.bfs_start = np.random.choice(self.n_sites) 
@@ -122,6 +126,12 @@ class CrystalGymEnv(gym.Env):
         except AssertionError:
             self.traversal = torch.tensor(list(range(self.n_sites)))
             self.err_flag = 1
+
+        if self.agent=='CHGNetRL':
+            assert self.env_options['substitution'] == True, "CHGNetRL only works with substitution"
+            state = canonical_crystal
+            for i in range(self.n_sites):
+                state.replace(i, Element.from_Z(SPECIES_IND_SMALL[graph.ndata['atomic_number'][i].item()]))
 
         return state, info
 
@@ -222,8 +232,10 @@ class CrystalGymEnv(gym.Env):
             reward (float): The reward.
         """
         error_flag = 0
-        canonical_crystal = self.render()
-        # species = set([sp.name for sp in canonical_crystal.species])
+        if self.agent == "MEGNetRL":
+            canonical_crystal = self.render()
+        elif self.agent == "CHGNetRL":
+            canonical_crystal = self.state
         atoms = AseAtomsAdaptor.get_atoms(canonical_crystal)
         nbnd = int(np.ceil(sum(atoms.get_atomic_numbers()) // 2 * 1.2))
         self.qe_inputs.update({'nbnd':nbnd})
@@ -248,6 +260,7 @@ class CrystalGymEnv(gym.Env):
                 return reward, bm, error_flag, sim_time
             else:
                 return -5.0, None, error_flag, None
+                
         elif self.env_options['property'] == 'sm':
             start_time = time.time()
             sm = self.calculate_sm(atoms)
@@ -314,13 +327,22 @@ class CrystalGymEnv(gym.Env):
             info (dict): Additional information
         """
         info = {}  
-        atomic_number = deepcopy(self.state.ndata['atomic_number'])
         index_curr_focus = self.traversal[self.t]
-        atomic_number[index_curr_focus] = torch.tensor(action)
-        next_observations = deepcopy(self.state)
-        next_observations.ndata['atomic_number'] = atomic_number
-        self.state = deepcopy(next_observations)
-        self.t += 1
+        if self.agent == "MEGNetRL":
+            atomic_number = deepcopy(self.state.ndata['atomic_number'])
+            atomic_number[index_curr_focus] = torch.tensor(action)
+            next_observations = deepcopy(self.state)
+            next_observations.ndata['atomic_number'] = atomic_number
+            self.state = deepcopy(next_observations)
+            self.t += 1
+            
+        elif self.agent == "CHGNetRL":
+            next_observations = deepcopy(self.state)
+            new_element = Element.from_Z(SPECIES_IND_SMALL[action.item()])
+            next_observations.replace(index_curr_focus, new_element)
+            self.state = deepcopy(next_observations)
+            self.t += 1
+
         if self.t == self.n_sites:
             terminated = truncated = True
             # self.t = 0
@@ -333,6 +355,7 @@ class CrystalGymEnv(gym.Env):
         else:
             terminated = truncated = False
             reward = 0.0
+
         return self.state, reward, terminated, truncated, info
     
     def graph_to_dict_complete(self, observations):

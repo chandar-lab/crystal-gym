@@ -18,6 +18,7 @@ wandb:
 
 algo:
   env_id: CrystalGymEnv-v0 # the id of the environment#
+  agent: MEGNetRL # the agent (policy network) to use
   total_timesteps: 500000 # total timesteps of the experiments 
   learning_rate: 2.5e-4 # the learning rate of the optimizer# 
   num_envs: 1 # the number of parallel game environments# 

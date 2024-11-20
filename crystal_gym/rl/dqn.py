@@ -95,6 +95,8 @@ def main(args: DictConfig) -> None:
 
     kwargs = {'env':dict(args.env), 'qe': dict(args.qe)}
     kwargs['env']['run_name'] = run_name
+    kwargs['env']['agent'] = args.algo.agent
+
     envs = make_env(args.algo.env_id, 0, args.exp.capture_video, run_name, kwargs)()
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
@@ -106,7 +108,7 @@ def main(args: DictConfig) -> None:
     rb = ReplayBuffer(
         storage=ListStorage(max_size=args.algo.buffer_size),
         batch_size = args.algo.batch_size,
-        collate_fn = partial(collate_function, p_hat = args.env.p_hat),
+        collate_fn = partial(collate_function, p_hat = args.env.p_hat, agent = args.algo.agent),
         pin_memory = True,
         prefetch = 16,
     )

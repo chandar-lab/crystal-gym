@@ -1,4 +1,4 @@
-# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppopy
+ba# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppopy
 import os
 import wandb
 import random
@@ -16,7 +16,7 @@ from torch.distributions.categorical import Categorical
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.tensorboard import SummaryWriter
-from crystal_gym.agents import MEGNetRL
+from crystal_gym.agents import MEGNetRL, CHGNetRL
 from crystal_gym.env import CrystalGymEnv
 import signal
 
@@ -46,7 +46,7 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
 
 
 class Agent(nn.Module):
-    def __init__(self, envs, type = "mlp"):
+    def __init__(self, envs, type = "mlp", device = "cpu"):
         super().__init__()
         if type == "mlp":
             self.critic = nn.Sequential(
@@ -70,10 +70,24 @@ class Agent(nn.Module):
                                    critic = True)
             self.actor = MEGNetRL(num_actions = envs.single_action_space.n,
                                   ntypes_state =  envs.single_action_space.n)
+        elif type == 'CHGNetRL':
+            # Check if special initialization is required for MEGNetRL
+            self.critic = CHGNetRL(num_actions = envs.single_action_space.n, 
+                                   critic = True)
+            self.actor = CHGNetRL(num_actions = envs.single_action_space.n)
+
         self.type = type
+        self.device = device
 
     def get_value(self, x):
-        return self.critic(x,x.edata['e_feat'], x.ndata['atomic_number'], x.lengths_angles_focus)
+        if self.type == "MEGNetRL":
+            return self.critic(x,x.edata['e_feat'], x.ndata['atomic_number'], x.lengths_angles_focus)
+        elif self.type == "CHGNetRL":
+            if type(x) == list:
+                x = [self.actor.chgnet.graph_converter(g).to(self.device) for g in x]
+            else:
+                x = [self.actor.chgnet.graph_converter(x).to(self.device)]
+            return self.critic(x)
 
     def get_action_and_value(self, x, action=None):
         if self.type == "mlp":
@@ -82,6 +96,13 @@ class Agent(nn.Module):
         elif self.type == "MEGNetRL":
             logits = self.actor(x,x.edata['e_feat'], x.ndata['atomic_number'], x.lengths_angles_focus)
             values = self.critic(x,x.edata['e_feat'], x.ndata['atomic_number'], x.lengths_angles_focus)
+        elif self.type == "CHGNetRL":
+            if type(x) == list:
+                x = [self.actor.chgnet.graph_converter(g).to(self.device) for g in x]
+            else:
+                x = [self.actor.chgnet.graph_converter(x).to(self.device)]
+            logits = self.actor(x)
+            values = self.critic(x)
         probs = Categorical(logits=logits)
         if action is None:
             action = probs.sample()
@@ -117,10 +138,11 @@ def main(args: DictConfig) -> None:
     ## Output of SyncVectorEnv is a list of outputs from each environment --  check how to parallellize this. ; but check AsyncVectorEnv
     kwargs = {'env':dict(args.env), 'qe': dict(args.qe)}
     kwargs['env']['run_name'] = run_name
+    kwargs['env']['agent'] = args.algo.agent
     envs = make_env(args.algo.env_id, 0, args.exp.capture_video, run_name, kwargs)()
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
-    agent = Agent(envs, type = "MEGNetRL").to(device)
+    agent = Agent(envs, type = args.algo.agent, device = device).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.algo.learning_rate, eps=1e-5)
 
     # ALGO Logic: Storage setup
@@ -135,7 +157,8 @@ def main(args: DictConfig) -> None:
     # TRY NOT TO MODIFY: start the game
     start_time = time.time()
     next_obs, _ = envs.reset(seed=args.exp.seed)
-    next_obs = next_obs.to(device)
+    if args.algo.agent == "MEGNetRL":
+        next_obs = next_obs.to(device)
     next_done = torch.zeros(args.algo.num_envs).to(device)
 
     # SAVE AND LOAD 
@@ -219,12 +242,16 @@ def main(args: DictConfig) -> None:
             next_obs, reward, terminations, truncations, infos = envs.step(action.cpu().numpy())
             next_done = np.logical_or(terminations, truncations).astype(np.float32)
             rewards[step] = torch.tensor(reward).to(device).view(-1)
-            next_obs, next_done = next_obs.to(device), torch.Tensor([next_done]).to(device)
+
+            next_done = torch.Tensor([next_done]).to(device)
+            if args.algo.agent == "MEGNetRL":
+                next_obs = next_obs.to(device)
             
             # reset the environments once the episode is over
             if next_done:
                 next_obs, _ = envs.reset()
-                next_obs = next_obs.to(device)
+                if args.algo.agent == "MEGNetRL":
+                    next_obs = next_obs.to(device)
 
             if "final_info" in infos:
                 for info in infos["final_info"]:
@@ -253,12 +280,13 @@ def main(args: DictConfig) -> None:
                 advantages[t] = lastgaelam = delta + args.algo.gamma * args.algo.gae_lambda * nextnonterminal * lastgaelam
             returns = advantages + values
 
-        # flatten the batch
-        # b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)  # Create a batch of graphs
-        lattice_features = torch.stack([obs[i].lengths_angles_focus for i in range(len(obs))]).squeeze()
-        # lattice_features = torch.cat((lattice_features, torch.tensor([args.env.p_hat]*lattice_features.shape[0])[:,None]), dim = 1)
-        focus_features = torch.stack([obs[i].focus for i in range(len(obs))])
-        focus_list_features = torch.stack([obs[i].focus_list for i in range(len(obs))])
+        if args.algo.agent == "MEGNetRL":
+            # flatten the batch
+            # b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)  # Create a batch of graphs
+            lattice_features = torch.stack([obs[i].lengths_angles_focus for i in range(len(obs))]).squeeze()
+            # lattice_features = torch.cat((lattice_features, torch.tensor([args.env.p_hat]*lattice_features.shape[0])[:,None]), dim = 1)
+            focus_features = torch.stack([obs[i].focus for i in range(len(obs))])
+            focus_list_features = torch.stack([obs[i].focus_list for i in range(len(obs))])
 
 
         b_logprobs = logprobs.reshape(-1)
@@ -275,10 +303,13 @@ def main(args: DictConfig) -> None:
             for start in range(0, batch_size, minibatch_size):
                 
                 end = start + minibatch_size
-                b_obs = dgl.batch(obs[start:end])
-                b_obs.lengths_angles_focus = lattice_features[start:end].to(device = device)
-                b_obs.focus = focus_features[start:end].to(device = device).squeeze()
-                b_obs.focus_list = focus_list_features[start:end].to(device = device)
+                if args.algo.agent == "MEGNetRL":
+                    b_obs = dgl.batch(obs[start:end])
+                    b_obs.lengths_angles_focus = lattice_features[start:end].to(device = device)
+                    b_obs.focus = focus_features[start:end].to(device = device).squeeze()
+                    b_obs.focus_list = focus_list_features[start:end].to(device = device)
+                elif args.algo.agent == "CHGNetRL":
+                    b_obs = obs[start:end]
 
                 mb_inds = b_inds[start:end]
                 _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs, b_actions.long()[mb_inds])

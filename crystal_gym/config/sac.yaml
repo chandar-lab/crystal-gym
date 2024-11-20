@@ -19,6 +19,7 @@ wandb:
 
 algo:
   env_id: CrystalGymEnv-v0 # the id of the environment#
+  agent: MEGNetRL # the agent (policy network) to use
   total_timesteps: 500000 # total timesteps of the experiments#
   buffer_size: 2000 # the size of the replay buffer # test 2000 and 15000
   gamma: 0.99

@@ -7,6 +7,16 @@ import dgl
 import torch
 from torch import nn
 from matgl.layers import EmbeddingBlock, MLP
+from chgnet.model.functions import MLP as MLP_CH
+from chgnet.model.model import CHGNet
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Literal
+from chgnet.graph import CrystalGraph, CrystalGraphConverter
+from torch import nn, Tensor
+from chgnet.model.model import BatchedGraph
+if TYPE_CHECKING:
+    from chgnet import PredTask
+
 
 NUM_ACTIONS = 88
 
@@ -168,4 +178,120 @@ class MEGNetRL(MEGNet, nn.Module, IOMixIn):
             vec = self.dropout(vec)  
 
         output = self.output_proj(vec)
+        return output
+    
+
+class CHGNetRL(nn.Module):
+    def __init__(
+        self,
+        atom_fea_dim: int = 64,
+        mlp_hidden_dims: Sequence[int] | int = (64, 64, 64),
+        mlp_dropout: float = 0,
+        non_linearity: Literal["silu", "relu", "tanh", "gelu"] = "silu",
+        critic: bool = False,
+        num_actions: int = NUM_ACTIONS,
+        **kwargs,
+    ) -> None:
+        super(CHGNetRL, self).__init__()
+        input_dim = atom_fea_dim
+
+        if critic:
+            out_dim = 1
+        else:
+            out_dim = num_actions
+
+        self.chgnet = CHGNet()
+        self.chgnet = self.chgnet.load()
+        self.mlp_bg = MLP_CH(
+                input_dim=input_dim,
+                hidden_dim=mlp_hidden_dims,
+                output_dim=out_dim,
+                dropout=mlp_dropout,
+                activation=non_linearity,
+            ).cuda()
+
+    def forward(
+        self,
+        graphs: Sequence[CrystalGraph],
+        task: PredTask = "bg",
+    ) -> dict[str, Tensor]:
+
+        # Make batched graph
+        batched_graph = BatchedGraph.from_graphs(
+            graphs,
+            bond_basis_expansion=self.chgnet.bond_basis_expansion,
+            angle_basis_expansion=self.chgnet.angle_basis_expansion,
+            compute_stress="s" in task,
+        )
+        # Pass to model
+        output = self._compute(
+            batched_graph,
+        )
+
+        return output
+
+    def _compute(
+                self,
+                g,
+            ) -> dict:
+        prediction = {}
+        atoms_per_graph = torch.bincount(g.atom_owners)
+        prediction["atoms_per_graph"] = atoms_per_graph
+        # Embed Atoms, Bonds and Angles
+        atom_feas = self.chgnet.atom_embedding(
+            g.atomic_numbers - 1
+        )  # let H be the first embedding column
+        bond_feas = self.chgnet.bond_embedding(g.bond_bases_ag)
+        bond_weights_ag = self.chgnet.bond_weights_ag(g.bond_bases_ag)
+        bond_weights_bg = self.chgnet.bond_weights_bg(g.bond_bases_bg)
+        if len(g.angle_bases) != 0:
+            angle_feas = self.chgnet.angle_embedding(g.angle_bases)
+
+        # Message Passing
+        for idx, (atom_layer, bond_layer, angle_layer) in enumerate(
+            zip(self.chgnet.atom_conv_layers[:-1], self.chgnet.bond_conv_layers, self.chgnet.angle_layers)
+        ):
+            # Atom Conv
+            atom_feas = atom_layer(
+                atom_feas=atom_feas,
+                bond_feas=bond_feas,
+                bond_weights=bond_weights_ag,
+                atom_graph=g.batched_atom_graph,
+                directed2undirected=g.directed2undirected,
+            )
+
+            # Bond Conv
+            if len(g.angle_bases) != 0 and bond_layer is not None:
+                bond_feas = bond_layer(
+                    atom_feas=atom_feas,
+                    bond_feas=bond_feas,
+                    bond_weights=bond_weights_bg,
+                    angle_feas=angle_feas,
+                    bond_graph=g.batched_bond_graph,
+                )
+
+                # Angle Update
+                if angle_layer is not None:
+                    angle_feas = angle_layer(
+                        atom_feas=atom_feas,
+                        bond_feas=bond_feas,
+                        angle_feas=angle_feas,
+                        bond_graph=g.batched_bond_graph,
+                    )
+            
+            # Last conv layer
+            atom_feas = self.chgnet.atom_conv_layers[-1](
+                atom_feas=atom_feas,
+                bond_feas=bond_feas,
+                bond_weights=bond_weights_ag,
+                atom_graph=g.batched_atom_graph,
+                directed2undirected=g.directed2undirected,
+            )
+            if self.chgnet.readout_norm is not None:
+                atom_feas = self.chgnet.readout_norm(atom_feas)
+
+        # Aggregate nodes and ReadOut
+        if self.chgnet.mlp_first:
+            crystal_feas = self.chgnet.pooling(atom_feas, g.atom_owners)
+            output = self.mlp_bg(crystal_feas)
         return output

@@ -1,6 +1,7 @@
 import torch
 import dgl
 import numpy as np
+from pymatgen.core.structure import Structure
 
 
 NUM_WORKERS = 16
@@ -88,103 +89,122 @@ def get_pbc_distances(
     return out
 
 
-def collate_function(batch, p_hat):
-    
+def collate_function(batch, p_hat, agent):
     batch_size = len(batch)
-    atomic_number_list = [None] * batch_size
-    true_atomic_number_list = [None] * batch_size
-    position_list = [None] * batch_size 
-    laf_list = [None] * batch_size
-    edges_u = [None] * batch_size
-    edges_v = [None] * batch_size
-    to_jimages = [None] * batch_size
-    sum_n_atoms = 0
-    n_atoms_list = []
-    n_edges_list = []
-    action_list = []
-    atomic_number_list_next = [None] * batch_size
-    num_edges = []
-    reward_list = []
-    bandgap_list = []
-    dones_list = []
-    focus_list = []
-    focus_list_next = []
-    efeat_list = []
+    if agent == "MEGNetRL":
+        atomic_number_list = [None] * batch_size
+        true_atomic_number_list = [None] * batch_size
+        position_list = [None] * batch_size 
+        laf_list = [None] * batch_size
+        edges_u = [None] * batch_size
+        edges_v = [None] * batch_size
+        to_jimages = [None] * batch_size
+        sum_n_atoms = 0
+        n_atoms_list = []
+        n_edges_list = []
+        action_list = []
+        atomic_number_list_next = [None] * batch_size
+        num_edges = []
+        reward_list = []
+        bandgap_list = []
+        dones_list = []
+        focus_list = []
+        focus_list_next = []
+        efeat_list = []
 
-    for i in range(batch_size):
-        data_dict = batch[i]
-        observation, next_observation, action, reward, done, infos = data_dict
-        atomic_number_list[i] = observation['atomic_number'][:-1]
-        focus_list.append(observation['atomic_number'][-1])
-        n_atoms = observation['atomic_number'].shape[0] - 1
-        # true_atomic_number_list[i] = observation['true_atomic_number']
-        position_list[i] = observation['coordinates'].to(device = 'cuda')
-        # if observation['laf'].shape[0] == 7:
-        # laf_list[i] = torch.cat((observation['laf'], torch.tensor([p_hat], device = 'cuda'))) 
-        # else:
-        laf_list[i] = observation['laf']
-        edges_u_single =  observation['edges'][0] + sum_n_atoms
-        edges_v_single =  observation['edges'][1] + sum_n_atoms
-        edges_cat = torch.cat([edges_u_single[:,None], edges_v_single[:,None]], dim = 1).to(device = 'cuda')
-        num_edges.append(edges_cat.shape[0])
+        for i in range(batch_size):
+            data_dict = batch[i]
+            observation, next_observation, action, reward, done, infos = data_dict
+            atomic_number_list[i] = observation['atomic_number'][:-1]
+            focus_list.append(observation['atomic_number'][-1])
+            n_atoms = observation['atomic_number'].shape[0] - 1
+            # true_atomic_number_list[i] = observation['true_atomic_number']
+            position_list[i] = observation['coordinates'].to(device = 'cuda')
+            # if observation['laf'].shape[0] == 7:
+            # laf_list[i] = torch.cat((observation['laf'], torch.tensor([p_hat], device = 'cuda'))) 
+            # else:
+            laf_list[i] = observation['laf']
+            edges_u_single =  observation['edges'][0] + sum_n_atoms
+            edges_v_single =  observation['edges'][1] + sum_n_atoms
+            edges_cat = torch.cat([edges_u_single[:,None], edges_v_single[:,None]], dim = 1).to(device = 'cuda')
+            num_edges.append(edges_cat.shape[0])
+            # try:
+            to_jimages[i] = observation['etype'].cpu()
+            # except:
+                # efeat/_list.append(observation['efeat'])
+            edges_u[i] = edges_cat[:,0]
+            edges_v[i] = edges_cat[:,1]
+            n_edges_list.append(edges_cat.shape[0])
+            sum_n_atoms += n_atoms
+            n_atoms_list.append(n_atoms)
+
+            action_list.append(action)
+            reward_list.append(reward)
+            # bandgap_list.append(bandgap)
+            dones_list.append(done)
+
+            atomic_number_list_next[i] = next_observation['atomic_number'][:-1]
+            focus_list_next.append(next_observation['atomic_number'][-1])
+        
+        edges_cat = torch.cat([torch.cat(edges_u)[:,None].to(device = 'cuda'), torch.cat(edges_v)[:,None].to(device = 'cuda')], dim = 1)
+        position = torch.cat(position_list, dim = 0)
+        laf_list = torch.stack(laf_list)
         # try:
-        to_jimages[i] = observation['etype'].cpu()
+        to_jimages = torch.cat(to_jimages, dim = 0)
+        out = get_pbc_distances(position.cpu(), edges_cat.cpu(), lengths = laf_list[:,:3].cpu(), angles = laf_list[:,3:6].cpu(), to_jimages = to_jimages.cpu(), 
+                            num_atoms = n_atoms_list, num_bonds=num_edges, coord_is_cart=True)
+        edata = out['distances'] 
         # except:
-            # efeat/_list.append(observation['efeat'])
-        edges_u[i] = edges_cat[:,0]
-        edges_v[i] = edges_cat[:,1]
-        n_edges_list.append(edges_cat.shape[0])
-        sum_n_atoms += n_atoms
-        n_atoms_list.append(n_atoms)
+            # edata = torch.cat(efeat_list)
 
-        action_list.append(action)
-        reward_list.append(reward)
-        # bandgap_list.append(bandgap)
-        dones_list.append(done)
+        g = dgl.graph(data = torch.unbind(edges_cat, dim = 1), num_nodes = sum_n_atoms)
+        g.ndata['atomic_number'] = torch.cat(atomic_number_list, dim = 0)
+        g.focus = torch.stack(focus_list).to(device='cuda', dtype = torch.int64)
+        # g.ndata['true_atomic_number'] = torch.cat(true_atomic_number_list, dim = 0)
+        g.lengths_angles_focus = laf_list.to(device='cuda')
+        g.edata['e_feat'] = edata.to(device='cuda')
+        g.edata['etype'] = to_jimages.to(device='cuda')
+        g.set_batch_num_nodes(torch.tensor(n_atoms_list).to(device='cuda'))
+        g.set_batch_num_edges(torch.tensor(n_edges_list).to(device='cuda'))
 
-        atomic_number_list_next[i] = next_observation['atomic_number'][:-1]
-        focus_list_next.append(next_observation['atomic_number'][-1])
-    
-    edges_cat = torch.cat([torch.cat(edges_u)[:,None].to(device = 'cuda'), torch.cat(edges_v)[:,None].to(device = 'cuda')], dim = 1)
-    position = torch.cat(position_list, dim = 0)
-    laf_list = torch.stack(laf_list)
-    # try:
-    to_jimages = torch.cat(to_jimages, dim = 0)
-    out = get_pbc_distances(position.cpu(), edges_cat.cpu(), lengths = laf_list[:,:3].cpu(), angles = laf_list[:,3:6].cpu(), to_jimages = to_jimages.cpu(), 
-                        num_atoms = n_atoms_list, num_bonds=num_edges, coord_is_cart=True)
-    edata = out['distances'] 
-    # except:
-        # edata = torch.cat(efeat_list)
+        g_next = dgl.graph(data = torch.unbind((edges_cat), dim = 1), num_nodes = sum_n_atoms)
+        g_next.ndata['atomic_number'] = torch.cat(atomic_number_list_next, dim = 0)
+        g_next.focus = torch.stack(focus_list_next).to(device='cuda', dtype = torch.int64)
+        # g_next.ndata['true_atomic_number'] = torch.cat(true_atomic_number_list, dim = 0)
+        g_next.ndata['position'] = torch.cat(position_list, dim = 0)
+        g_next.lengths_angles_focus = laf_list.to(device='cuda')
+        g_next.edata['e_feat'] = edata.to(device='cuda')
+        g_next.edata['etype'] = to_jimages.to(device='cuda')
+        g_next.set_batch_num_nodes(torch.tensor(n_atoms_list).to(device='cuda'))
+        g_next.set_batch_num_edges(torch.tensor(n_edges_list).to(device='cuda'))
 
-    g = dgl.graph(data = torch.unbind(edges_cat, dim = 1), num_nodes = sum_n_atoms)
-    g.ndata['atomic_number'] = torch.cat(atomic_number_list, dim = 0)
-    g.focus = torch.stack(focus_list).to(device='cuda', dtype = torch.int64)
-    # g.ndata['true_atomic_number'] = torch.cat(true_atomic_number_list, dim = 0)
-    g.lengths_angles_focus = laf_list.to(device='cuda')
-    g.edata['e_feat'] = edata.to(device='cuda')
-    g.edata['etype'] = to_jimages.to(device='cuda')
-    g.set_batch_num_nodes(torch.tensor(n_atoms_list).to(device='cuda'))
-    g.set_batch_num_edges(torch.tensor(n_edges_list).to(device='cuda'))
+        g = g.to(device='cuda')
+        g_next = g_next.to(device='cuda')
+        action_list = torch.tensor(np.array(action_list)).to(device = 'cuda')
+        reward_list = torch.tensor(np.array(reward_list)).to(device = 'cuda')
+        dones_list = torch.tensor(np.array(dones_list)).to(device = 'cuda')
 
-    g_next = dgl.graph(data = torch.unbind((edges_cat), dim = 1), num_nodes = sum_n_atoms)
-    g_next.ndata['atomic_number'] = torch.cat(atomic_number_list_next, dim = 0)
-    g_next.focus = torch.stack(focus_list_next).to(device='cuda', dtype = torch.int64)
-    # g_next.ndata['true_atomic_number'] = torch.cat(true_atomic_number_list, dim = 0)
-    g_next.ndata['position'] = torch.cat(position_list, dim = 0)
-    g_next.lengths_angles_focus = laf_list.to(device='cuda')
-    g_next.edata['e_feat'] = edata.to(device='cuda')
-    g_next.edata['etype'] = to_jimages.to(device='cuda')
-    g_next.set_batch_num_nodes(torch.tensor(n_atoms_list).to(device='cuda'))
-    g_next.set_batch_num_edges(torch.tensor(n_edges_list).to(device='cuda'))
-
-    g = g.to(device='cuda')
-    g_next = g_next.to(device='cuda')
-    action_list = torch.tensor(np.array(action_list)).to(device = 'cuda')
-    reward_list = torch.tensor(np.array(reward_list)).to(device = 'cuda')
-    dones_list = torch.tensor(np.array(dones_list)).to(device = 'cuda')
-
-    return g, g_next, action_list, reward_list, dones_list
-
+        return g, g_next, action_list, reward_list, dones_list
+    elif agent == "CHGNetRL":
+        obs_list = []
+        next_obs_list = []
+        action_list = []
+        reward_list = []
+        dones_list = []
+        for i in range(batch_size):
+            data_dict = batch[i]
+            observation, next_observation, action, reward, done, infos = data_dict
+            obs_struct = Structure.from_dict(observation)
+            next_obs_struct = Structure.from_dict(next_observation)
+            obs_list.append(obs_struct)
+            next_obs_list.append(next_obs_struct)
+            action_list.append(action)
+            reward_list.append(reward)
+            dones_list.append(done)
+        action_list = torch.tensor(np.array(action_list)).to(device = 'cuda')
+        reward_list = torch.tensor(np.array(reward_list)).to(device = 'cuda')
+        dones_list = torch.tensor(np.array(dones_list)).to(device = 'cuda')
+        return obs_list, next_obs_list, action_list, reward_list, dones_list
 
 def collate_function_eval(batch, p_hat):
 
