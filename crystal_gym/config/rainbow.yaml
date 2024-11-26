@@ -1,0 +1,37 @@
+defaults:
+  - qe: qe.yaml
+  - env: env.yaml
+
+exp:
+  exp_name: rainbow # the name of this experiment
+  seed: 1 # seed of the experiment
+  torch_deterministic: True # if toggled, `torch.backends.cudnn.deterministic=False`
+  cuda: True #if toggled, cuda will be enabled by default
+  track: True #if toggled, this experiment will be tracked with Weights and Biases
+  capture_video: False
+  save_freq: 100 # the frequency of saving the models
+
+wandb:
+  mode: online
+  wandb_project_name: RAINBOW # the wandb's project name
+  wandb_group: RAINBOW-DEFAULT # the entity (team) of wandb's project
+
+algo:
+  env_id: CrystalGymEnv-v0 # the id of the environment#
+  agent: MEGNetRL # the agent (policy network) to use
+  total_timesteps: 500000 # total timesteps of the experiments 
+  learning_rate: 2.5e-4 # the learning rate of the optimizer# 
+  num_envs: 1 # the number of parallel game environments# 
+  buffer_size: 2000 # the size of the replay buffer # test 2000 and 15000
+  gamma: 0.99
+  tau: 1.0 #target smoothing coefficient (default: 1)
+  batch_size: 64
+  start_e: 1.0 # starting epsilon value
+  end_e: 0.05 # ending epsilon value
+  exploration_fraction: 0.2 # 0.
+  learning_starts: 1000 # timestep to start learning; lower this
+  train_frequency: 4 # the frequency of training updates; do 4, not 10 
+  target_network_frequency: 500 # test 500, 100
+  multi_step: 1
+  double: true
+  dueling: true
