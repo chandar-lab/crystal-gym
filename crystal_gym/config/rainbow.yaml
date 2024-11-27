@@ -35,3 +35,4 @@ algo:
   multi_step: 1
   double: true
   dueling: true
+  substitution: true

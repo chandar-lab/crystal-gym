@@ -66,18 +66,18 @@ class RainbowAgent(nn.Module):
                                     ntypes_state =  env.single_action_space.n, critic=False)
 
                 self.value = Sequential(
-                                        Linear(env.single_action_space.n, 120),
+                                        Linear(env.single_action_space.n, 64),
                                         ReLU(),
-                                        Linear(120, 84),
+                                        Linear(64, 64),
                                         ReLU(),
-                                        Linear(84, 1),
+                                        Linear(64, 1),
                                     )
                 self.advantage = Sequential(
-                                        Linear(env.single_action_space.n, 120),
+                                        Linear(env.single_action_space.n, 64),
                                         ReLU(),
-                                        Linear(120, 84),
+                                        Linear(64, 64),
                                         ReLU(),
-                                        Linear(84, env.single_action_space.n),
+                                        Linear(64, env.single_action_space.n),
                                     )
             else:
                                     
@@ -263,7 +263,10 @@ def main(args: DictConfig) -> None:
                 n_reward = multi_step_reward(reward_deque, args.algo.gamma)
                 n_state = state_deque[i]
                 n_action = action_deque[i]
-                next_obs_dict_old = state_deque[i+1]
+                if i + 1 <= len(state_deque) - 1:
+                    next_obs_dict_old = state_deque[i+1]
+                else:
+                    next_obs_dict_old = deepcopy(next_obs_dict)
                 rb.add((n_state, next_obs_dict_old, n_action, n_reward, terminations, infos))
                 reward_deque.popleft()
 
