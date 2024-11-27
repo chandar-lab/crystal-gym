@@ -16,7 +16,7 @@ from pymatgen.core import Structure, Lattice
 from crystal_gym.utils.data_utils import build_crystal, build_crystal_graph
 from crystal_gym.utils.variables import ELEMENTS_SMALL, SPECIES_IND_INV, SPECIES_IND_SMALL, SPACE_GROUP_TYPE, SPECIES_IND_SMALL_INV
 from dgl.traversal import bfs_nodes_generator
-from crystal_gym.utils.variables import CUBIC_INDS_VAL, CUBIC_VAL_FIVE
+from crystal_gym.utils.variables import CUBIC_INDS_VAL, CUBIC_VAL_FIVE, CUBIC_MINI
 from pymatgen.core import Element
 import subprocess
 
@@ -83,7 +83,9 @@ class CrystalGymEnv(gym.Env):
             self.sample_ind = np.random.choice(CUBIC_INDS_VAL)
         elif self.env_options['mode'] == 'cubic-five':  
             self.sample_ind = np.random.choice(CUBIC_VAL_FIVE)
-        
+        elif self.env_options['mode'] == 'cubic-mini':
+            self.sample_ind = np.random.choice(CUBIC_MINI)
+
         cif_string = self.data.loc[self.sample_ind]['cif']
         self.space_grp = self.data.loc[self.sample_ind]['spacegroup.number']
         canonical_crystal = build_crystal(cif_string)
@@ -132,7 +134,7 @@ class CrystalGymEnv(gym.Env):
             state = canonical_crystal
             for i in range(self.n_sites):
                 state.replace(i, Element.from_Z(SPECIES_IND_SMALL[graph.ndata['atomic_number'][i].item()]))
-
+        self.state = state
         return state, info
 
     def calculate_sm(self, atoms):
@@ -162,7 +164,7 @@ class CrystalGymEnv(gym.Env):
             
             energies.append(energy)
             stresses.append(stress)
-        
+        #breakpoint()
         # Calculate shear modulus (C44 for cubic crystals)
         # volume = atoms.get_volume()
         shear_stresses = [stress[3] for stress in stresses]  # xy component
@@ -256,7 +258,7 @@ class CrystalGymEnv(gym.Env):
                 reward = - np.abs(self.env_options['p_hat'] - bm) / self.env_options['p_hat']
                 sim_time = end_time - start_time
                 if self.env_options['reward_min'] and reward < self.env_options['reward_min']:
-                        reward = self.env_options['reward_min']
+                    reward = self.env_options['reward_min']
                 return reward, bm, error_flag, sim_time
             else:
                 return -5.0, None, error_flag, None
