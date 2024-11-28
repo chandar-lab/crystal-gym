@@ -242,13 +242,15 @@ def main(args: DictConfig) -> None:
             next_obs, reward, terminations, truncations, infos = envs.step(action.cpu().numpy())
             next_done = np.logical_or(terminations, truncations).astype(np.float32)
             rewards[step] = torch.tensor(reward).to(device).view(-1)
-
+          
             next_done = torch.Tensor([next_done]).to(device)
             if args.algo.agent == "MEGNetRL":
                 next_obs = next_obs.to(device)
             
+
             # reset the environments once the episode is over
             if next_done:
+                # breakpoint()
                 next_obs, _ = envs.reset()
                 if args.algo.agent == "MEGNetRL":
                     next_obs = next_obs.to(device)
@@ -286,7 +288,7 @@ def main(args: DictConfig) -> None:
             lattice_features = torch.stack([obs[i].lengths_angles_focus for i in range(len(obs))]).squeeze()
             # lattice_features = torch.cat((lattice_features, torch.tensor([args.env.p_hat]*lattice_features.shape[0])[:,None]), dim = 1)
             focus_features = torch.stack([obs[i].focus for i in range(len(obs))])
-            focus_list_features = torch.stack([obs[i].focus_list for i in range(len(obs))])
+            # focus_list_features = torch.stack([obs[i].focus_list for i in range(len(obs))])
 
 
         b_logprobs = logprobs.reshape(-1)
@@ -307,7 +309,7 @@ def main(args: DictConfig) -> None:
                     b_obs = dgl.batch(obs[start:end])
                     b_obs.lengths_angles_focus = lattice_features[start:end].to(device = device)
                     b_obs.focus = focus_features[start:end].to(device = device).squeeze()
-                    b_obs.focus_list = focus_list_features[start:end].to(device = device)
+                    # b_obs.focus_list = focus_list_features[start:end].to(device = device)
                 elif args.algo.agent == "CHGNetRL":
                     b_obs = obs[start:end]
 
