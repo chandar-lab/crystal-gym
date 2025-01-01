@@ -15,7 +15,7 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 from crystal_gym.env import CrystalGymEnv
 from copy import deepcopy
-from torchrl.data import ReplayBuffer, ListStorage
+from torchrl.data import ReplayBuffer, ListStorage, PrioritizedReplayBuffer
 from functools import partial
 from crystal_gym.utils import collate_function
 import signal
@@ -29,6 +29,10 @@ def catch_signal(sig, frame):
     global caught_signal
     caught_signal = True
 
+
+def beta_schedule(start_beta: float, end_beta: float, duration: int, t: int):
+    slope = (end_beta - start_beta) / duration
+    return min(slope * t + start_beta, end_beta)
 
 def make_env(env_id, idx, capture_video, run_name, kwargs):
     def thunk():
@@ -104,14 +108,24 @@ def main(args: DictConfig) -> None:
     optimizer = optim.Adam(q_network.parameters(), lr=args.algo.learning_rate)
     target_network = QNetwork(envs, type = "MEGNetRL").to(device)
     target_network.load_state_dict(q_network.state_dict())
-
-    rb = ReplayBuffer(
-        storage=ListStorage(max_size=args.algo.buffer_size),
-        batch_size = args.algo.batch_size,
-        collate_fn = partial(collate_function, p_hat = args.env.p_hat, agent = args.algo.agent),
-        pin_memory = True,
-        prefetch = 16,
-    )
+    if args.algo.replay_type == "uniform":
+        rb = ReplayBuffer(
+            storage=ListStorage(max_size=args.algo.buffer_size),
+            batch_size = args.algo.batch_size,
+            collate_fn = partial(collate_function, p_hat = args.env.p_hat, agent = args.algo.agent),
+            pin_memory = True,
+            prefetch = 16,
+        )
+    elif args.algo.replay_type == "prioritized":
+        rb = PrioritizedReplayBuffer(
+                    alpha=0.6,
+                    beta=0.4,
+                    storage=ListStorage(max_size=args.algo.buffer_size),
+                    batch_size = args.algo.batch_size,
+                    collate_fn = partial(collate_function, p_hat = args.env.p_hat, agent = args.algo.agent),
+                    pin_memory = True,
+                    prefetch = 16,
+                )
 
 
     # SAVE AND LOAD
@@ -138,7 +152,8 @@ def main(args: DictConfig) -> None:
 
             rb_state = run_state["states"]["rb"]
             rb.extend(rb_state["_storage"]["_storage"])
-
+            if args.algo.replay_type == "prioritized":
+                rb.sampler.load_state_dict(rb_state["_sampler"])
             run_id = run_state["run_id"]
     
             start_iteration = global_step = run_state["global_step"]
@@ -217,7 +232,10 @@ def main(args: DictConfig) -> None:
         # ALGO LOGIC: training.
         if global_step > args.algo.learning_starts:
             if global_step % args.algo.train_frequency == 0:
-                data = rb.sample()
+                if args.algo.replay_type == "uniform":
+                    data = rb.sample()
+                elif args.algo.replay_type == "prioritized":
+                    data, info = rb.sample(return_info=True)
                 (
                     observations_sampled,
                     next_observations_sampled,
@@ -232,7 +250,10 @@ def main(args: DictConfig) -> None:
                     td_target = rewards_sampled.flatten() + args.algo.gamma * target_max * (1.0 - dones_sampled.flatten().to(torch.float32))
                 old_val = q_network(observations_sampled).gather(1, actions_sampled.unsqueeze(1)).squeeze()
                 loss = F.mse_loss(td_target, old_val)
-
+                if args.algo.replay_type == "prioritized":
+                    rb.update_priority(info["index"], loss.cpu().detach().numpy())
+                    beta = beta_schedule(0.4, 1.0, args.algo.total_timesteps, global_step - args.algo.learning_starts)
+                    rb.sampler._beta = beta
                 if global_step % 100 == 0:
                     writer.add_scalar("losses/td_loss", loss, global_step)
                     writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)

@@ -54,7 +54,7 @@ def layer_init(layer, bias_const=0.0):
 # See the SAC+AE paper https://arxiv.org/abs/1910.01741 for more info
 # TL;DR The actor's gradients mess up the representation when using a joint encoder
 class SoftQNetwork(nn.Module):
-    def __init__(self, envs, type = "mlp"):
+    def __init__(self, envs, type = "mlp", device = 'cuda'):
         super().__init__()
         obs_shape = envs.single_observation_space.shape
         if type == "mlp":
@@ -78,6 +78,7 @@ class SoftQNetwork(nn.Module):
         elif type == "CHGNetRL":
             self.qnet = CHGNetRL(num_actions = envs.single_action_space.n)
         self.type = type
+        self.device = device
 
     def forward(self, x):
         if self.type == "mlp":
@@ -96,7 +97,7 @@ class SoftQNetwork(nn.Module):
 
 
 class Actor(nn.Module):
-    def __init__(self, envs, type = "mlp"):
+    def __init__(self, envs, type = "mlp", device = 'cuda'):
         super().__init__()
         obs_shape = envs.single_observation_space.shape
         if type == "mlp":
@@ -121,7 +122,7 @@ class Actor(nn.Module):
         elif type == "CHGNetRL":
             self.actor = CHGNetRL(num_actions = envs.single_action_space.n)
         self.type = type
-
+        self.device = device
     def forward(self, x):
         if self.type == "mlp":
             x = F.relu(self.conv(x))
@@ -184,11 +185,11 @@ def main(args: DictConfig) -> None:
     envs = make_env(args.algo.env_id, 0, args.exp.capture_video, run_name, kwargs)()
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
-    actor = Actor(envs, type = args.algo.agent).to(device)
-    qf1 = SoftQNetwork(envs, type = args.algo.agent).to(device)
-    qf2 = SoftQNetwork(envs, type = args.algo.agent).to(device)
-    qf1_target = SoftQNetwork(envs, type = args.algo.agent).to(device)
-    qf2_target = SoftQNetwork(envs, type = args.algo.agent).to(device)
+    actor = Actor(envs, type = args.algo.agent, device=device).to(device)
+    qf1 = SoftQNetwork(envs, type = args.algo.agent, device= device).to(device)
+    qf2 = SoftQNetwork(envs, type = args.algo.agent, device=device).to(device)
+    qf1_target = SoftQNetwork(envs, type = args.algo.agent, device=device).to(device)
+    qf2_target = SoftQNetwork(envs, type = args.algo.agent, device=device).to(device)
     qf1_target.load_state_dict(qf1.state_dict())
     qf2_target.load_state_dict(qf2.state_dict())
 

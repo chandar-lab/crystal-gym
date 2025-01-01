@@ -32,3 +32,6 @@ algo:
   learning_starts: 1000 # timestep to start learning; lower this
   train_frequency: 4 # the frequency of training updates; do 4, not 10 
   target_network_frequency: 500 # test 500, 100
+  replay_type: 'uniform' # the type of replay buffer to use
+
+

@@ -85,7 +85,8 @@ def build_crystal(crystal_str, niggli=True, primitive=False):
 def build_crystal_graph(crystal, 
                         species_ind, 
                         graph_method='crystalnn',
-                        substitution = False):
+                        substitution = False, 
+                        vocab_size = 88):
     """
     Source: https://github.com/txie-93/cdvae/tree/main/cdvae
     """
@@ -125,10 +126,9 @@ def build_crystal_graph(crystal,
     g.add_nodes(num_atoms)
     edge_indices = torch.tensor(np.array(edge_indices))
     if substitution:
-        g.ndata['atomic_number'] = torch.tensor(np.random.choice(18, num_atoms))
-        
+        g.ndata['atomic_number'] = torch.tensor(np.random.choice(vocab_size, num_atoms))
     else:
-        g.ndata['atomic_number'] = torch.ones((num_atoms)) * 88
+        g.ndata['atomic_number'] = torch.ones((num_atoms)) * vocab_size
     g.ndata['true_atomic_number'] = torch.tensor(true_atom_types) #.to(device = 'cuda:0')  ## 56 vocab size + 1 blank slot 
     g.ndata['coords'] = torch.tensor(coords)
     g.add_edges(edge_indices[:,0], edge_indices[:,1])

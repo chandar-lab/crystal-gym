@@ -11,7 +11,7 @@ def collate_function_crysrl(batch, p_hat, device = 'cuda'):
     to_jimages = batch.edata['to_jimages']
     positions = batch.ndata['coords'].to(dtype = torch.float32)
     la = torch.cat((batch.lengths, batch.angles)).to(dtype = torch.float32)
-    batch.ndata['atomic_number'][batch.ndata['atomic_number'] == 88.0] = 18.0
+    # batch.ndata['atomic_number'][batch.ndata['atomic_number'] == 88.0] = 18.0
     num_edges = edges_cat.shape[0]
     n_atoms = batch.ndata['atomic_number'].shape[0]
     out = get_pbc_distances(positions, edges_cat, lengths = la[None, :3], angles = la[None, 3:6], to_jimages = to_jimages, 
