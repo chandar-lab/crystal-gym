@@ -1,7 +1,7 @@
 #!/bin/bash
 
 
-for prop in bm band_gap
+for prop in density bm band_gap
     do
         if [ $prop == "bm" ]
         then
@@ -9,21 +9,36 @@ for prop in bm band_gap
             tstress=true
             tprnfor=true
             occupations=smearing
-        else
+            calculation=scf
+            tsteps=100000
+        elif [ $prop == "band_gap" ]
+        then
             p_hat=1.12
             tstress=false
             tprnfor=false
             occupations=fixed
+            calculation=scf
+            tsteps=200000
+        elif [ $prop == "density" ]
+        then
+            p_hat=3.0
+            tstress=false
+            tprnfor=false
+            occupations=smearing
+            calculation=vc-relax
+            tsteps=100000
         fi
-        for ind in 630 3403 8666 8354
+        for ind in 8666 2271 630 3403 2190 8906 8354
         do
-            for rb_size in 2000 10000
+            for rb_size in 2000 #10000
                 do
-                for target_freq in 100 500
+                for target_freq in 100 #500
                     do
                         for seed in 10 20 30
                         do
-                            sbatch --constraint ampere --job-name="DQN-HP-${prop^^}-$ind-$rb_size-$target_freq" script DQN DQN-$prop-$ind-$rb_size-$target_freq dqn-hp-$prop-$ind-$rb_size-$target_freq $seed $seed $ind $prop $p_hat $tstress $tprnfor $occupations $rb_size $target_freq
+                            # dqn-priority-$prop-$ind-$rb_size-$target_freq
+                            # dqn-correct-$prop-$ind-$rb_size-$target_freq
+                            sbatch --job-name="DQN-HP-${prop^^}-$ind-$rb_size-$target_freq" script.sh CRYSTALGYM DQN-$prop-$ind-$rb_size-$target_freq dqn-smallfin-$prop-$p_hat-$ind-$rb_size-$target_freq-$tsteps $seed $seed $ind $prop $p_hat $tstress $tprnfor $occupations $rb_size $target_freq $calculation $tsteps
                         done
                     done
                 done

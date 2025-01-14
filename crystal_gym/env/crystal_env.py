@@ -248,7 +248,10 @@ class CrystalGymEnv(gym.Env):
         return bm, 0
     
     def calculate_density(self, atoms):
-        energy = atoms.get_potential_energy()
+        try:
+            energy = atoms.get_potential_energy()
+        except:
+            pass
         with open("/".join(['calculations/'+self.run_name, 'espresso.pwo']), 'r') as f:
             lines = f.read()
             if 'convergence NOT achieved after' in lines:
@@ -308,7 +311,7 @@ class CrystalGymEnv(gym.Env):
             density, error_flag = self.calculate_density(atoms)
             end_time = time.time()
             if error_flag == 0:
-                reward = self.distance(self.env_options['p_hat'], torch.tensor([density]), 3.0).item()
+                reward = self.distance(self.env_options['p_hat'], torch.tensor([density]), self.env_options['p_hat']).item()
                 sim_time = end_time - start_time
                 return reward, density, error_flag, sim_time
             else:

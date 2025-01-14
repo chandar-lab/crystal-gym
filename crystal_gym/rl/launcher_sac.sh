@@ -15,15 +15,15 @@ for prop in bm band_gap
             tprnfor=false
             occupations=fixed
         fi
-        for ind in 630 3403 #8666 2271
+        for ind in 8666 2271 630 3403 2190 8906 8354
         do
-            for rb_size in 2000 10000
+            for rb_size in 2000 #10000
                 do
-                for target_freq in 100 500
+                for target_freq in 100 #500
                     do
                         for seed in 10 20 30
                         do
-                            sbatch --constraint ampere --job-name="SAC-HP-${prop^^}-$ind-$rb_size-$target_freq" script SAC SAC-$prop-$ind-$rb_size-$target_freq sac-hp-$prop-$ind-$rb_size-$target_freq $seed $seed $ind $prop $p_hat $tstress $tprnfor $occupations $rb_size $target_freq
+                            sbatch  --job-name="SAC-HP-${prop^^}-$ind-$rb_size-$target_freq" script.sh CRYSTALGYM SAC-$prop-$ind-$rb_size-$target_freq sac-large-$prop-$ind-$rb_size-$target_freq $seed $seed $ind $prop $p_hat $tstress $tprnfor $occupations $rb_size $target_freq
                         done
                     done
                 done

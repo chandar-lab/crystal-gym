@@ -4,8 +4,6 @@ Version: 0.0.0
 Summary: A Gymnasium environment for generating crystalline materials.
 Requires-Python: >=3.9
 Description-Content-Type: text/markdown
-Requires-Dist: numpy
-Requires-Dist: torch
 
 # crystal-gym
 A Gymnasium environment for generating crystalline materials. 

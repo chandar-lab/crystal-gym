@@ -12,7 +12,7 @@ import torch.nn as nn
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn import Linear, Sequential, ReLU
-from torchrl.data import ReplayBuffer, ListStorage
+from torchrl.data import ReplayBuffer, ListStorage, PrioritizedReplayBuffer
 from crystal_gym.agents import MEGNetRL
 from crystal_gym.utils import collate_function
 from copy import deepcopy
@@ -34,6 +34,9 @@ def multi_step_reward(rewards, gamma):
         ret += reward * (gamma ** idx)
     return ret
 
+def beta_schedule(start_beta: float, end_beta: float, duration: int, t: int):
+    slope = (end_beta - start_beta) / duration
+    return min(slope * t + start_beta, end_beta)
 
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
     slope = (end_e - start_e) / duration
@@ -131,19 +134,32 @@ def main(args: DictConfig) -> None:
     target_network = RainbowAgent(envs, type = "MEGNetRL", dueling = args.algo.dueling).to(device)
     target_network.load_state_dict(q_network.state_dict())
 
-    rb = ReplayBuffer(
-        storage=ListStorage(max_size=args.algo.buffer_size),
-        batch_size = args.algo.batch_size,
-        collate_fn = partial(collate_function, p_hat = args.env.p_hat, agent = args.algo.agent),
-        pin_memory = True,
-        prefetch = 16,
-    )
+    if args.algo.replay_type == "uniform":
+        rb = ReplayBuffer(
+            storage=ListStorage(max_size=args.algo.buffer_size),
+            batch_size = args.algo.batch_size,
+            collate_fn = partial(collate_function, p_hat = args.env.p_hat, agent = args.algo.agent),
+            pin_memory = True,
+            prefetch = 16,
+        )
+    elif args.algo.replay_type == "prioritized":
+        rb = PrioritizedReplayBuffer(
+                    alpha=0.6,
+                    beta=0.4,
+                    storage=ListStorage(max_size=args.algo.buffer_size),
+                    batch_size = args.algo.batch_size,
+                    collate_fn = partial(collate_function, p_hat = args.env.p_hat, agent = args.algo.agent),
+                    pin_memory = True,
+                    prefetch = 16,
+                )
 
     state_deque = deque(maxlen=args.algo.multi_step)
     reward_deque = deque(maxlen=args.algo.multi_step)
     action_deque = deque(maxlen=args.algo.multi_step)
 
     # SAVE AND LOAD
+    if args.env.p_hat == 5.0:
+        run_name += "_p5"
     save_path = os.path.join(os.getcwd(), "models", run_name)
     try:
         start_iteration = 0
@@ -167,7 +183,8 @@ def main(args: DictConfig) -> None:
 
             rb_state = run_state["states"]["rb"]
             rb.extend(rb_state["_storage"]["_storage"])
-
+            if args.algo.replay_type == "prioritized":
+                rb.sampler.load_state_dict(rb_state["_sampler"])
             run_id = run_state["run_id"]
     
             start_iteration = global_step = run_state["global_step"]
@@ -277,7 +294,10 @@ def main(args: DictConfig) -> None:
         # ALGO LOGIC: training.
         if global_step > args.algo.learning_starts:
             if global_step % args.algo.train_frequency == 0:
-                data = rb.sample()
+                if args.algo.replay_type == "uniform":
+                    data = rb.sample()
+                elif args.algo.replay_type == "prioritized":
+                    data, info = rb.sample(return_info=True)
                 (
                     observations_sampled,
                     next_observations_sampled,
@@ -297,6 +317,11 @@ def main(args: DictConfig) -> None:
                     td_target = rewards_sampled.flatten() + (args.algo.gamma ** args.algo.multi_step) * target_max * (1.0 - dones_sampled.flatten().to(torch.float32))
                 old_val = q_network(observations_sampled).gather(1, actions_sampled.unsqueeze(1)).squeeze()
                 loss = F.mse_loss(td_target, old_val)
+
+                if args.algo.replay_type == "prioritized":
+                    rb.update_priority(info["index"], loss.cpu().detach().numpy())
+                    beta = beta_schedule(0.4, 1.0, args.algo.total_timesteps, global_step - args.algo.learning_starts)
+                    rb.sampler._beta = beta
 
                 if global_step % 100 == 0:
                     writer.add_scalar("losses/td_loss", loss, global_step)

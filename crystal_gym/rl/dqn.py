@@ -249,11 +249,16 @@ def main(args: DictConfig) -> None:
                     target_max, _ = target_network(next_observations_sampled).max(dim=1)
                     td_target = rewards_sampled.flatten() + args.algo.gamma * target_max * (1.0 - dones_sampled.flatten().to(torch.float32))
                 old_val = q_network(observations_sampled).gather(1, actions_sampled.unsqueeze(1)).squeeze()
-                loss = F.mse_loss(td_target, old_val)
+                # For priority take abs loss without reduction
                 if args.algo.replay_type == "prioritized":
-                    rb.update_priority(info["index"], loss.cpu().detach().numpy())
-                    beta = beta_schedule(0.4, 1.0, args.algo.total_timesteps, global_step - args.algo.learning_starts)
+                    loss = F.mse_loss(td_target, old_val, reduction="none")
+                    priority = loss.sqrt().cpu().detach().numpy() 
+                    rb.update_priority(info["index"], priority)
+                    loss = (loss * info["weights"]).mean()
+                    beta = beta_schedule(0.4, 1.0, args.algo.total_timesteps, global_step - args.algo.learning_starts) # change total timesteps acc to property, ideally, it should reach 1 at the end, not in between
                     rb.sampler._beta = beta
+                elif args.algo.replay_type == "uniform":
+                    loss = F.mse_loss(td_target, old_val) # traditionally in prioritized, absolute TD error is the priority
                 if global_step % 100 == 0:
                     writer.add_scalar("losses/td_loss", loss, global_step)
                     writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)

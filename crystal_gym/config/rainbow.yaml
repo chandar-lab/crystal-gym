@@ -36,3 +36,4 @@ algo:
   double: true
   dueling: true
   substitution: true
+  replay_type: uniform
