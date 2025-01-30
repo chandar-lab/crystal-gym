@@ -10,6 +10,7 @@ exp:
   track: True #if toggled, this experiment will be tracked with Weights and Biases
   capture_video: False
   save_freq: 100 # the frequency of saving the models
+  mode: train
 
 wandb:
   mode: online

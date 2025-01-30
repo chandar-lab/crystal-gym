@@ -21,6 +21,7 @@ from crystal_gym.utils import collate_function
 import signal
 import wandb
 
+from pymatgen.io.cif import CifWriter
 
 
 caught_signal = False
@@ -29,10 +30,6 @@ def catch_signal(sig, frame):
     global caught_signal
     caught_signal = True
 
-
-def beta_schedule(start_beta: float, end_beta: float, duration: int, t: int):
-    slope = (end_beta - start_beta) / duration
-    return min(slope * t + start_beta, end_beta)
 
 def make_env(env_id, idx, capture_video, run_name, kwargs):
     def thunk():
@@ -116,7 +113,7 @@ def main(args: DictConfig) -> None:
             pin_memory = True,
             prefetch = 16,
         )
-    elif args.algo.replay_type == "prioritized":
+    else:
         rb = PrioritizedReplayBuffer(
                     alpha=0.6,
                     beta=0.4,
@@ -152,8 +149,7 @@ def main(args: DictConfig) -> None:
 
             rb_state = run_state["states"]["rb"]
             rb.extend(rb_state["_storage"]["_storage"])
-            if args.algo.replay_type == "prioritized":
-                rb.sampler.load_state_dict(rb_state["_sampler"])
+
             run_id = run_state["run_id"]
     
             start_iteration = global_step = run_state["global_step"]
@@ -186,11 +182,19 @@ def main(args: DictConfig) -> None:
     
     start_time = time.time()
 
+    if args.exp.mode == 'eval':
+        start_iteration = 1
+        os.chdir(os.path.join(os.getcwd(), "evals"))
+        
+
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=args.exp.seed)
     for global_step in range(start_iteration, args.algo.total_timesteps):
         # ALGO LOGIC: put action logic here
-        epsilon = linear_schedule(args.algo.start_e, args.algo.end_e, args.algo.exploration_fraction * args.algo.total_timesteps, global_step)
+        if args.exp.mode == 'train':
+            epsilon = linear_schedule(args.algo.start_e, args.algo.end_e, args.algo.exploration_fraction * args.algo.total_timesteps, global_step)
+        else:
+            epsilon = 0.0
         if random.random() < epsilon:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)]).item()
         else:
@@ -203,7 +207,7 @@ def main(args: DictConfig) -> None:
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
-        if "final_info" in infos:
+        if "final_info" in infos and args.exp.mode == 'train':
                 for info in infos["final_info"]:
                     if info and "episode" in info:
                         print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
@@ -226,16 +230,22 @@ def main(args: DictConfig) -> None:
         if not terminations:
             obs = next_obs
         else:
-            obs, _ = envs.reset()
-            obs = obs.to(device)
+            if args.exp.mode == 'train':
+                obs, _ = envs.reset()
+                obs = obs.to(device)
+            else:
+                crystal = envs.render()
+                cif_writer = CifWriter(crystal)
+                bg = infos['final_info'][0]['episode']['bg']
+                os.makedirs(f"evals/{run_name}", exist_ok = True)
+                cif_writer.write_file(f"evals/{run_name}/{global_step}_{bg}.cif")
+                obs, _ = envs.reset()
+                obs = obs.to(device)
 
         # ALGO LOGIC: training.
-        if global_step > args.algo.learning_starts:
+        if global_step > args.algo.learning_starts and args.exp.mode == "train":
             if global_step % args.algo.train_frequency == 0:
-                if args.algo.replay_type == "uniform":
-                    data = rb.sample()
-                elif args.algo.replay_type == "prioritized":
-                    data, info = rb.sample(return_info=True)
+                data = rb.sample()
                 (
                     observations_sampled,
                     next_observations_sampled,
@@ -249,16 +259,8 @@ def main(args: DictConfig) -> None:
                     target_max, _ = target_network(next_observations_sampled).max(dim=1)
                     td_target = rewards_sampled.flatten() + args.algo.gamma * target_max * (1.0 - dones_sampled.flatten().to(torch.float32))
                 old_val = q_network(observations_sampled).gather(1, actions_sampled.unsqueeze(1)).squeeze()
-                # For priority take abs loss without reduction
-                if args.algo.replay_type == "prioritized":
-                    loss = F.mse_loss(td_target, old_val, reduction="none")
-                    priority = loss.sqrt().cpu().detach().numpy() 
-                    rb.update_priority(info["index"], priority)
-                    loss = (loss * info["weights"]).mean()
-                    beta = beta_schedule(0.4, 1.0, args.algo.total_timesteps, global_step - args.algo.learning_starts) # change total timesteps acc to property, ideally, it should reach 1 at the end, not in between
-                    rb.sampler._beta = beta
-                elif args.algo.replay_type == "uniform":
-                    loss = F.mse_loss(td_target, old_val) # traditionally in prioritized, absolute TD error is the priority
+                loss = F.mse_loss(td_target, old_val)
+
                 if global_step % 100 == 0:
                     writer.add_scalar("losses/td_loss", loss, global_step)
                     writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
@@ -276,7 +278,7 @@ def main(args: DictConfig) -> None:
                     target_network_param.data.copy_(
                         args.algo.tau * q_network_param.data + (1.0 - args.algo.tau) * target_network_param.data
                     )
-        if (global_step % args.exp.save_freq == 0 or caught_signal) and global_step > 0:
+        if (global_step % args.exp.save_freq == 0 or caught_signal) and global_step > 0 and args.exp.mode == "train":
             states = {"q_network": q_network.state_dict(), "target_network": target_network.state_dict(), "optimizer": optimizer.state_dict(), "rb": rb.state_dict()}
 
             run_state = {
@@ -291,7 +293,19 @@ def main(args: DictConfig) -> None:
                 files = sorted(files, key = lambda x: int(x.split('_')[-1].split('.')[0]))[:-10]
                 [os.remove(os.path.join(save_path, file)) for file in files]
 
+
     envs.close()
     writer.close()
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
+
+
+
+

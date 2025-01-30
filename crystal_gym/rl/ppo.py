@@ -1,4 +1,3 @@
-# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppopy
 import os
 import wandb
 import random
@@ -19,6 +18,8 @@ from torch.utils.tensorboard import SummaryWriter
 from crystal_gym.agents import MEGNetRL, CHGNetRL
 from crystal_gym.env import CrystalGymEnv
 import signal
+import ase
+from pymatgen.io.cif import CifWriter
 
 caught_signal = False
 
@@ -113,7 +114,6 @@ class Agent(nn.Module):
 @hydra.main(version_base = None, config_path="../config", config_name="ppo")
 def main(args: DictConfig) -> None:
     # args = tyro.cli(Args)
-
     signal.signal(signal.SIGTERM, catch_signal)
 
     batch_size = int(args.algo.num_envs * args.algo.num_steps)
@@ -217,6 +217,9 @@ def main(args: DictConfig) -> None:
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
 
+    if args.exp.mode == 'eval':
+        start_iteration = 1
+        os.chdir(os.path.join(os.getcwd(), "evals"))
 
     for iteration in range(start_iteration, num_iterations + 1):
         # Annealing the rate if instructed to do so.
@@ -249,21 +252,21 @@ def main(args: DictConfig) -> None:
             
 
             # reset the environments once the episode is over
-            if next_done:
+            if next_done and args.exp.mode == 'train':
                 # breakpoint()
                 next_obs, _ = envs.reset()
                 if args.algo.agent == "MEGNetRL":
                     next_obs = next_obs.to(device)
-
-            if "final_info" in infos:
-                for info in infos["final_info"]:
-                    if info and "episode" in info:
-                        print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
-                        writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                        writer.add_scalar("charts/episodic_error", info["episode"]["error_flag"], global_step)
-                        if 'bg' in info['episode']:
-                            writer.add_scalar("charts/episodic_bg", info["episode"]["bg"], global_step)
-                            writer.add_scalar("charts/episodic_sim_time", info["episode"]["sim_time"], global_step)
+            if args.exp.mode == 'train':
+                if "final_info" in infos:
+                    for info in infos["final_info"]:
+                        if info and "episode" in info:
+                            print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
+                            writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
+                            writer.add_scalar("charts/episodic_error", info["episode"]["error_flag"], global_step)
+                            if 'bg' in info['episode']:
+                                writer.add_scalar("charts/episodic_bg", info["episode"]["bg"], global_step)
+                                writer.add_scalar("charts/episodic_sim_time", info["episode"]["sim_time"], global_step)
                         # writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
 
         # bootstrap value if not done
@@ -290,109 +293,131 @@ def main(args: DictConfig) -> None:
             focus_features = torch.stack([obs[i].focus for i in range(len(obs))])
             # focus_list_features = torch.stack([obs[i].focus_list for i in range(len(obs))])
 
+        if args.exp.mode == 'train':
+            b_logprobs = logprobs.reshape(-1)
+            b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
+            b_advantages = advantages.reshape(-1)
+            b_returns = returns.reshape(-1)
+            b_values = values.reshape(-1)
 
-        b_logprobs = logprobs.reshape(-1)
-        b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
-        b_advantages = advantages.reshape(-1)
-        b_returns = returns.reshape(-1)
-        b_values = values.reshape(-1)
+            # Optimizing the policy and value network
+            b_inds = np.arange(batch_size)
+            clipfracs = []
+            for epoch in range(args.algo.update_epochs):
+                np.random.shuffle(b_inds)
+                for start in range(0, batch_size, minibatch_size):
+                    
+                    end = start + minibatch_size
+                    if args.algo.agent == "MEGNetRL":
+                        b_obs = dgl.batch(obs[start:end])
+                        b_obs.lengths_angles_focus = lattice_features[start:end].to(device = device)
+                        b_obs.focus = focus_features[start:end].to(device = device).squeeze()
+                        # b_obs.focus_list = focus_list_features[start:end].to(device = device)
+                    elif args.algo.agent == "CHGNetRL":
+                        b_obs = obs[start:end]
 
-        # Optimizing the policy and value network
-        b_inds = np.arange(batch_size)
-        clipfracs = []
-        for epoch in range(args.algo.update_epochs):
-            np.random.shuffle(b_inds)
-            for start in range(0, batch_size, minibatch_size):
-                
-                end = start + minibatch_size
-                if args.algo.agent == "MEGNetRL":
-                    b_obs = dgl.batch(obs[start:end])
-                    b_obs.lengths_angles_focus = lattice_features[start:end].to(device = device)
-                    b_obs.focus = focus_features[start:end].to(device = device).squeeze()
-                    # b_obs.focus_list = focus_list_features[start:end].to(device = device)
-                elif args.algo.agent == "CHGNetRL":
-                    b_obs = obs[start:end]
+                    mb_inds = b_inds[start:end]
+                    _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs, b_actions.long()[mb_inds])
+                    logratio = newlogprob - b_logprobs[mb_inds]
+                    ratio = logratio.exp()
 
-                mb_inds = b_inds[start:end]
-                _, newlogprob, entropy, newvalue = agent.get_action_and_value(b_obs, b_actions.long()[mb_inds])
-                logratio = newlogprob - b_logprobs[mb_inds]
-                ratio = logratio.exp()
+                    with torch.no_grad():
+                        # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                        old_approx_kl = (-logratio).mean()
+                        approx_kl = ((ratio - 1) - logratio).mean()
+                        clipfracs += [((ratio - 1.0).abs() > args.algo.clip_coef).float().mean().item()]
 
-                with torch.no_grad():
-                    # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                    old_approx_kl = (-logratio).mean()
-                    approx_kl = ((ratio - 1) - logratio).mean()
-                    clipfracs += [((ratio - 1.0).abs() > args.algo.clip_coef).float().mean().item()]
+                    mb_advantages = b_advantages[mb_inds]
+                    if args.algo.norm_adv:
+                        mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
-                mb_advantages = b_advantages[mb_inds]
-                if args.algo.norm_adv:
-                    mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
+                    # Policy loss
+                    pg_loss1 = -mb_advantages * ratio
+                    pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.algo.clip_coef, 1 + args.algo.clip_coef)
+                    pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
-                # Policy loss
-                pg_loss1 = -mb_advantages * ratio
-                pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.algo.clip_coef, 1 + args.algo.clip_coef)
-                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+                    # Value loss
+                    newvalue = newvalue.view(-1)
+                    if args.algo.clip_vloss:
+                        v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
+                        v_clipped = b_values[mb_inds] + torch.clamp(
+                            newvalue - b_values[mb_inds],
+                            -args.algo.clip_coef,
+                            args.algo.clip_coef,
+                        )
+                        v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
+                        v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
+                        v_loss = 0.5 * v_loss_max.mean()
+                    else:
+                        v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
-                # Value loss
-                newvalue = newvalue.view(-1)
-                if args.algo.clip_vloss:
-                    v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
-                    v_clipped = b_values[mb_inds] + torch.clamp(
-                        newvalue - b_values[mb_inds],
-                        -args.algo.clip_coef,
-                        args.algo.clip_coef,
-                    )
-                    v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
-                    v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                    v_loss = 0.5 * v_loss_max.mean()
-                else:
-                    v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
+                    entropy_loss = entropy.mean()
+                    loss = pg_loss - args.algo.ent_coef * entropy_loss + v_loss * args.algo.vf_coef
 
-                entropy_loss = entropy.mean()
-                loss = pg_loss - args.algo.ent_coef * entropy_loss + v_loss * args.algo.vf_coef
+                    optimizer.zero_grad()
+                    loss.backward()
+                    nn.utils.clip_grad_norm_(agent.parameters(), args.algo.max_grad_norm)
+                    optimizer.step()
 
-                optimizer.zero_grad()
-                loss.backward()
-                nn.utils.clip_grad_norm_(agent.parameters(), args.algo.max_grad_norm)
-                optimizer.step()
+                if args.algo.target_kl is not None and approx_kl > args.algo.target_kl:
+                    break
 
-            if args.algo.target_kl is not None and approx_kl > args.algo.target_kl:
-                break
+            y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
+            var_y = np.var(y_true)
+            explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
-        y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
-        var_y = np.var(y_true)
-        explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+            if iteration % args.exp.save_freq == 0 or caught_signal:
+                variables = {"actions": actions, "values": values, "logprobs": logprobs, "rewards": rewards, "dones": dones}
+                states = {"agent": agent.state_dict(), "optimizer": optimizer.state_dict()}
+                run_state = {
+                                "iteration": iteration,
+                                "run_name": run_name,
+                                "run_id": run_id,
+                                "global_step": global_step,
+                                "variables": variables, 
+                                "states": states
+                            }
+                torch.save(run_state, os.path.join(save_path, f"ckpt_{iteration}.pt"))
+                files = os.listdir(save_path)
+                if len(files) > 10:
+                    files = sorted(files, key = lambda x: int(x.split('_')[-1].split('.')[0]))[:-10]
+                    [os.remove(os.path.join(save_path, file)) for file in files]
 
-        if iteration % args.exp.save_freq == 0 or caught_signal:
-            variables = {"actions": actions, "values": values, "logprobs": logprobs, "rewards": rewards, "dones": dones}
-            states = {"agent": agent.state_dict(), "optimizer": optimizer.state_dict()}
-            run_state = {
-                            "iteration": iteration,
-                            "run_name": run_name,
-                            "run_id": run_id,
-                            "global_step": global_step,
-                            "variables": variables, 
-                            "states": states
-                        }
-            torch.save(run_state, os.path.join(save_path, f"ckpt_{iteration}.pt"))
-            files = os.listdir(save_path)
-            if len(files) > 10:
-                files = sorted(files, key = lambda x: int(x.split('_')[-1].split('.')[0]))[:-10]
-                [os.remove(os.path.join(save_path, file)) for file in files]
-
-        # TRY NOT TO MODIFY: record rewards for plotting purposes
-        writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
-        writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
-        writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
-        writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
-        writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
-        writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
-        writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
-        writer.add_scalar("losses/explained_variance", explained_var, global_step)
-        print("SPS:", int(global_step / (time.time() - start_time)))
-        writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-
+            # TRY NOT TO MODIFY: record rewards for plotting purposes
+            writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
+            writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
+            writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
+            writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
+            writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
+            writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
+            writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
+            writer.add_scalar("losses/explained_variance", explained_var, global_step)
+            print("SPS:", int(global_step / (time.time() - start_time)))
+            writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+        else:
+            crystal = envs.render()
+            cif_writer = CifWriter(crystal)
+            bg = infos['final_info'][0]['episode']['bg']
+            os.makedirs(f"evals/{run_name}", exist_ok = True)
+            cif_writer.write_file(f"evals/{run_name}/{iteration}_{bg}.cif")
+            next_obs, _ = envs.reset()
+            next_obs = next_obs.to(device)
+            
     envs.close()
     writer.close()
 if __name__ == '__main__':
     main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+

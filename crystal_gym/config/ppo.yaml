@@ -10,6 +10,7 @@ exp:
   track: True #if toggled, this experiment will be tracked with Weights and Biases
   capture_video: False # whether to capture videos of the agent performances (check out `videos` folder)
   save_freq: 50 # the frequency of saving the model
+  mode: train
 
 wandb:
   mode: online

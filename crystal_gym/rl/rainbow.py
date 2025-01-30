@@ -20,7 +20,7 @@ from crystal_gym.env import CrystalGymEnv
 import torch.nn.functional as F
 import gymnasium as gym
 from collections import deque
-
+from pymatgen.io.cif import CifWriter
 
 caught_signal = False
 
@@ -107,6 +107,26 @@ def main(args: DictConfig) -> None:
     
     
     signal.signal(signal.SIGTERM, catch_signal)
+ #   proc_id = os.environ.get("SLURM_PROCID")
+ #   if proc_id == 0:
+ #       args.exp.seed = 10
+ #       args.env.seed = 10
+ #   elif proc_id == 1:
+ #       args.exp.seed = 20
+ #       args.env.seed = 20
+ #   elif proc_id == 2:
+ #       args.exp.seed = 30
+ #       args.env.seed = 30
+
+    # if args.env.mode == "cubic-mini":
+    #     if proc_id == 0:
+    #         args.exp.seed = 20
+    #         args.env.seed = 20
+    #     elif proc_id == 1:
+    #         args.exp.seed = 30
+    #         args.env.seed = 30
+            
+    print('Seed ', args.exp.seed)
     run_name = f"{args.algo.env_id}__{args.exp.exp_name}__{args.exp.seed}"
     
     # TRY NOT TO MODIFY: seeding
@@ -158,8 +178,8 @@ def main(args: DictConfig) -> None:
     action_deque = deque(maxlen=args.algo.multi_step)
 
     # SAVE AND LOAD
-    if args.env.p_hat == 5.0:
-        run_name += "_p5"
+    # if args.env.p_hat == 5.0 and args.exp.mode == 'eval':
+    #     run_name += "_p5"
     save_path = os.path.join(os.getcwd(), "models", run_name)
     try:
         start_iteration = 0
@@ -222,11 +242,17 @@ def main(args: DictConfig) -> None:
     
     start_time = time.time()
 
+    if args.exp.mode == 'eval':
+        start_iteration = 1
+        os.chdir(os.path.join(os.getcwd(), "evals"))
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=args.exp.seed)
     for global_step in range(start_iteration, args.algo.total_timesteps):
         # ALGO LOGIC: put action logic here
-        epsilon = linear_schedule(args.algo.start_e, args.algo.end_e, args.algo.exploration_fraction * args.algo.total_timesteps, global_step)
+        if args.exp.mode == 'train':
+            epsilon = linear_schedule(args.algo.start_e, args.algo.end_e, args.algo.exploration_fraction * args.algo.total_timesteps, global_step)
+        else:
+            epsilon = 0.0
         if random.random() < epsilon:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)]).item()
         else:
@@ -239,7 +265,7 @@ def main(args: DictConfig) -> None:
         next_obs, rewards, terminations, truncations, infos = envs.step(actions)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
-        if "final_info" in infos:
+        if "final_info" in infos and args.exp.mode == 'train':
                 for info in infos["final_info"]:
                     if info and "episode" in info:
                         print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
@@ -256,43 +282,53 @@ def main(args: DictConfig) -> None:
          #       real_next_obs[idx] = infos["final_observation"][idx]
         obs_dict = envs.graph_to_dict(obs)
         next_obs_dict = envs.graph_to_dict(real_next_obs)
-
-        state_deque.append(obs_dict)
-        reward_deque.append(rewards)
-        action_deque.append(actions)
-        if len(state_deque) == args.algo.multi_step or terminations:
-            n_reward = multi_step_reward(reward_deque, args.algo.gamma)
-            n_state = state_deque[0]
-            n_action = action_deque[0]
-            rb.add((n_state, next_obs_dict, n_action, n_reward, terminations, infos))
+        if args.exp.mode == 'train':
+            state_deque.append(obs_dict)
+            reward_deque.append(rewards)
+            action_deque.append(actions)
+            if len(state_deque) == args.algo.multi_step or terminations:
+                n_reward = multi_step_reward(reward_deque, args.algo.gamma)
+                n_state = state_deque[0]
+                n_action = action_deque[0]
+                rb.add((n_state, next_obs_dict, n_action, n_reward, terminations, infos))
         
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         if not terminations:
             obs = next_obs
         else:
-            obs, _ = envs.reset()
-            obs = obs.to(device)
-            state_deque.popleft()
-            reward_deque.popleft()
-            action_deque.popleft()
-            
-            for i in range(len(state_deque)):
-                n_reward = multi_step_reward(reward_deque, args.algo.gamma)
-                n_state = state_deque[i]
-                n_action = action_deque[i]
-                if i + 1 <= len(state_deque) - 1:
-                    next_obs_dict_old = state_deque[i+1]
-                else:
-                    next_obs_dict_old = deepcopy(next_obs_dict)
-                rb.add((n_state, next_obs_dict_old, n_action, n_reward, terminations, infos))
+            if args.exp.mode == 'train':
+                obs, _ = envs.reset()
+                obs = obs.to(device)
+                state_deque.popleft()
                 reward_deque.popleft()
+                action_deque.popleft()
+            
+                for i in range(len(state_deque)):
+                    n_reward = multi_step_reward(reward_deque, args.algo.gamma)
+                    n_state = state_deque[i]
+                    n_action = action_deque[i]
+                    if i + 1 <= len(state_deque) - 1:
+                        next_obs_dict_old = state_deque[i+1]
+                    else:
+                        next_obs_dict_old = deepcopy(next_obs_dict)
+                    rb.add((n_state, next_obs_dict_old, n_action, n_reward, terminations, infos))
+                    reward_deque.popleft()
 
-            state_deque.clear()
-            reward_deque.clear()
-            action_deque.clear()
+                state_deque.clear()
+                reward_deque.clear()
+                action_deque.clear()
+            else:
+                crystal = envs.render()
+                cif_writer = CifWriter(crystal)
+                bg = infos['final_info'][0]['episode']['bg']
+                os.makedirs(f"evals/{run_name}", exist_ok = True)
+                cif_writer.write_file(f"evals/{run_name}/{global_step}_{bg}.cif")
+                obs, _ = envs.reset()
+                obs = obs.to(device)
+
 
         # ALGO LOGIC: training.
-        if global_step > args.algo.learning_starts:
+        if global_step > args.algo.learning_starts and args.exp.mode == "train":
             if global_step % args.algo.train_frequency == 0:
                 if args.algo.replay_type == "uniform":
                     data = rb.sample()
@@ -361,4 +397,8 @@ def main(args: DictConfig) -> None:
     writer.close()
 if __name__ == "__main__":
     main()
+
+
+
+
 
