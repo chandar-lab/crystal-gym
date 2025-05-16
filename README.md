@@ -71,7 +71,8 @@ In the `crystal_gym/samples` folder we provide some sample QE input files (`.pwi
 
 The CrystalGym environment class is defined in `crystal_gym/env/crystal_env.py`. To load the environment
 
-```
+
+```python
 import gymnasium as gym
 from crystal_gym.env import CrystalGymEnv
 import yaml
