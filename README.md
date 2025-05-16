@@ -19,9 +19,11 @@ Installation of `conda` environment (deactivate all existing environments before
 
 - `pip install -e .`
 
-Extract Psedopotentials
+### Extract Psedopotentials
 
 - `cd crystal_gym/files`
+
+Download Standard solid-state pseudopotentials (SSSP v1.3.0) from https://www.materialscloud.org/discover/sssp 
 
 - `tar -xvf SSSP.tar.gz` 
 
@@ -159,6 +161,7 @@ Please refer to the respective config files of Rainbow, PPO, and SAC for knowing
 3. MEGNet (http://github.com/materialsvirtuallab/matgl)
 4. PyMatGen (https://github.com/materialsproject/pymatgen)
 5. ASE (https://wiki.fysik.dtu.dk/ase/)
+6. SSSP PBEsol Precision v1.3.0 (https://www.materialscloud.org/discover/sssp)
 
 
 ## License

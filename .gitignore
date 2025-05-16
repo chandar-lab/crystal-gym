@@ -2,10 +2,8 @@ models
 outputs
 output
 error
-files
 wandb
 runs
-data
 calculations
-*.csv
 __pycache__
+*.tar.gz
