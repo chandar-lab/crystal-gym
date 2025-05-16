@@ -14,9 +14,17 @@ from ase.calculators.espresso import Espresso, EspressoProfile
 from pymatgen.io.vasp.inputs import Kpoints
 from pymatgen.core import Structure, Lattice
 from crystal_gym.utils.data_utils import build_crystal, build_crystal_graph
-from crystal_gym.utils.variables import ELEMENTS_SMALL, SPECIES_IND_INV, SPECIES_IND_SMALL, SPACE_GROUP_TYPE, SPECIES_IND_SMALL_INV
+from crystal_gym.utils.variables import (ELEMENTS_SMALL, 
+                                    ELEMENTS_MEDIUM, 
+                                    ELEMENTS_LARGE, 
+                                    SPECIES_IND_INV, 
+                                    SPECIES_IND_SMALL, 
+                                    SPECIES_IND_MEDIUM, 
+                                    SPECIES_IND_LARGE, 
+                                    SPACE_GROUP_TYPE, 
+                                    SPECIES_IND_SMALL_INV,
+                                    CUBIC_MINI)
 from dgl.traversal import bfs_nodes_generator
-from crystal_gym.utils.variables import CUBIC_INDS_VAL, CUBIC_VAL_FIVE
 import subprocess
 
 RY_CONST = 13.605691932782346
@@ -49,7 +57,17 @@ class CrystalGymEnv(gym.Env):
         self.data = pd.read_csv(self.env_options['data_path'])
 
         # Define the action and observation space
-        self.action_space = self.single_action_space = gym.spaces.Discrete(len(ELEMENTS_SMALL))
+        self.vocab = self.env_options['vocab']
+        if self.vocab == 'small':
+            self.action_space = self.single_action_space = gym.spaces.Discrete(len(ELEMENTS_SMALL))
+            self.vocab_size = len(ELEMENTS_SMALL)
+        elif self.vocab == 'medium':
+            self.action_space = self.single_action_space = gym.spaces.Discrete(len(ELEMENTS_MEDIUM))
+            self.vocab_size = len(ELEMENTS_MEDIUM)
+        elif self.vocab == 'large':
+            self.action_space = self.single_action_space = gym.spaces.Discrete(len(ELEMENTS_LARGE))
+            self.vocab_size = len(ELEMENTS_LARGE)
+
         self.observation_space =  self.single_observation_space = gym.spaces.Box(low=0, high=100, shape=(1,)) # Dummy observation space; actual space is a graph
 
         ## DFT Inputs
@@ -62,8 +80,10 @@ class CrystalGymEnv(gym.Env):
                 pseudo_dir = pseudo_dir,
             )
         
+        self.agent = self.env_options['agent']
         self.state, _ = self.reset(self.env_options['seed'], {})
         self.t = 0
+
 
     def reset(self, 
             seed = 0, 
@@ -80,11 +100,18 @@ class CrystalGymEnv(gym.Env):
             self.sample_ind = np.random.choice(CUBIC_INDS_VAL)
         elif self.env_options['mode'] == 'cubic-five':  
             self.sample_ind = np.random.choice(CUBIC_VAL_FIVE)
-        
+        elif self.env_options['mode'] == 'cubic-mini':
+            self.sample_ind = np.random.choice(CUBIC_MINI)
+
         cif_string = self.data.loc[self.sample_ind]['cif']
         self.space_grp = self.data.loc[self.sample_ind]['spacegroup.number']
         canonical_crystal = build_crystal(cif_string)
-        graph = build_crystal_graph(canonical_crystal, SPECIES_IND_SMALL)
+        if self.vocab == 'small':
+            graph = build_crystal_graph(canonical_crystal, SPECIES_IND_SMALL, vocab_size = self.vocab_size, substitution = self.env_options['substitution'])
+        elif self.vocab == 'medium':
+            graph = build_crystal_graph(canonical_crystal, SPECIES_IND_MEDIUM, vocab_size = self.vocab_size, substitution = self.env_options['substitution'])
+        elif self.vocab == 'large':
+            graph = build_crystal_graph(canonical_crystal, SPECIES_IND_LARGE, vocab_size = self.vocab_size, substitution = self.env_options['substitution'])
 
         self.n_sites = graph.num_nodes()
         self.bfs_start = np.random.choice(self.n_sites) 
@@ -123,6 +150,17 @@ class CrystalGymEnv(gym.Env):
             self.traversal = torch.tensor(list(range(self.n_sites)))
             self.err_flag = 1
 
+        if self.agent=='CHGNetRL':
+            assert self.env_options['substitution'] == True, "CHGNetRL only works with substitution"
+            state = canonical_crystal
+            for i in range(self.n_sites):
+                if self.vocab == 'small':
+                    state.replace(i, Element.from_Z(SPECIES_IND_SMALL[graph.ndata['atomic_number'][i].item()]))
+                elif self.vocab == 'medium':
+                    state.replace(i, Element.from_Z(SPECIES_IND_MEDIUM[graph.ndata['atomic_number'][i].item()]))
+                elif self.vocab == 'large':
+                    state.replace(i, Element.from_Z(SPECIES_IND_LARGE[graph.ndata['atomic_number'][i].item()]))
+        self.state = state
         return state, info
 
     def calculate_sm(self, atoms):
@@ -142,19 +180,21 @@ class CrystalGymEnv(gym.Env):
             # Apply shear strain (e.g., xy component)
             deformation = np.eye(3)
             deformation[0, 1] = strain
+            deformation[2, 1] = strain
+
             cell = np.dot(cell, deformation)
-            
+            print(cell)
             deformed_atoms.set_cell(cell, scale_atoms=True)
             deformed_atoms.calc = atoms.calc
-            
             energy = deformed_atoms.get_potential_energy()
             stress = deformed_atoms.get_stress()
             
             energies.append(energy)
             stresses.append(stress)
-        
+        #breakpoint()
         # Calculate shear modulus (C44 for cubic crystals)
         # volume = atoms.get_volume()
+        breakpoint()
         shear_stresses = [stress[3] for stress in stresses]  # xy component
         
         slope, _ = np.polyfit(strains, shear_stresses, 1)
@@ -213,6 +253,20 @@ class CrystalGymEnv(gym.Env):
                 return None, 2
 
         return bm, 0
+    
+    def calculate_density(self, atoms):
+        try:
+            energy = atoms.get_potential_energy()
+        except:
+            pass
+        with open("/".join(['calculations/'+self.run_name, 'espresso.pwo']), 'r') as f:
+            lines = f.read()
+            if 'convergence NOT achieved after' in lines:
+                return None, 1
+            elif 'charge is wrong' in lines:
+                return None, 2
+            density = float(lines.split('density =')[1].split()[0])
+            return density, 0
 
     
     def compute_reward(self):
@@ -222,8 +276,10 @@ class CrystalGymEnv(gym.Env):
             reward (float): The reward.
         """
         error_flag = 0
-        canonical_crystal = self.render()
-        # species = set([sp.name for sp in canonical_crystal.species])
+        if self.agent == "MEGNetRL":
+            canonical_crystal = self.render()
+        elif self.agent == "CHGNetRL":
+            canonical_crystal = self.state
         atoms = AseAtomsAdaptor.get_atoms(canonical_crystal)
         nbnd = int(np.ceil(sum(atoms.get_atomic_numbers()) // 2 * 1.2))
         self.qe_inputs.update({'nbnd':nbnd})
@@ -244,10 +300,11 @@ class CrystalGymEnv(gym.Env):
                 reward = - np.abs(self.env_options['p_hat'] - bm) / self.env_options['p_hat']
                 sim_time = end_time - start_time
                 if self.env_options['reward_min'] and reward < self.env_options['reward_min']:
-                        reward = self.env_options['reward_min']
+                    reward = self.env_options['reward_min']
                 return reward, bm, error_flag, sim_time
             else:
                 return -5.0, None, error_flag, None
+                
         elif self.env_options['property'] == 'sm':
             start_time = time.time()
             sm = self.calculate_sm(atoms)
@@ -255,6 +312,17 @@ class CrystalGymEnv(gym.Env):
             reward = - np.abs(self.env_options['p_hat'] - sm) / self.env_options['p_hat']
             sim_time = end_time - start_time
             return reward, sm, error_flag, sim_time
+        
+        elif self.env_options['property'] == 'density':
+            start_time = time.time()
+            density, error_flag = self.calculate_density(atoms)
+            end_time = time.time()
+            if error_flag == 0:
+                reward = self.distance(self.env_options['p_hat'], torch.tensor([density]), self.env_options['p_hat']).item()
+                sim_time = end_time - start_time
+                return reward, density, error_flag, sim_time
+            else:
+                return -1.0, None, error_flag, None
         else:
             try:
                 start_time = time.time()
@@ -286,7 +354,7 @@ class CrystalGymEnv(gym.Env):
 
             return reward, None, error_flag, None
     
-    def distance(self, target, predicted):
+    def distance(self, target, predicted, beta = 1.0):
         """
         Compute the distance between two vectors.
         Args:
@@ -296,9 +364,9 @@ class CrystalGymEnv(gym.Env):
             distance (float): The distance between the two vectors.
         """
         try:
-            d = torch.exp(-(target - predicted)**2 / 1.0)[0]
+            d = torch.exp(-(target - predicted)**2 / beta)[0]
         except:
-            d = torch.exp(-(target - predicted)**2 / 1.0)#[0]
+            d = torch.exp(-(target - predicted)**2 / beta)#[0]
         return d
 
     def step(self, action):
@@ -314,13 +382,27 @@ class CrystalGymEnv(gym.Env):
             info (dict): Additional information
         """
         info = {}  
-        atomic_number = deepcopy(self.state.ndata['atomic_number'])
         index_curr_focus = self.traversal[self.t]
-        atomic_number[index_curr_focus] = torch.tensor(action)
-        next_observations = deepcopy(self.state)
-        next_observations.ndata['atomic_number'] = atomic_number
-        self.state = deepcopy(next_observations)
-        self.t += 1
+        if self.agent == "MEGNetRL":
+            atomic_number = deepcopy(self.state.ndata['atomic_number'])
+            atomic_number[index_curr_focus] = torch.tensor(action)
+            next_observations = deepcopy(self.state)
+            next_observations.ndata['atomic_number'] = atomic_number
+            self.state = deepcopy(next_observations)
+            self.t += 1
+            
+        elif self.agent == "CHGNetRL":
+            next_observations = deepcopy(self.state)
+            if self.vocab == 'small':
+                new_element = Element.from_Z(SPECIES_IND_SMALL[action.item()])
+            elif self.vocab == 'medium':
+                new_element = Element.from_Z(SPECIES_IND_MEDIUM[action.item()])
+            elif self.vocab == 'large':
+                new_element = Element.from_Z(SPECIES_IND_LARGE[action.item()])
+            next_observations.replace(index_curr_focus, new_element)
+            self.state = deepcopy(next_observations)
+            self.t += 1
+
         if self.t == self.n_sites:
             terminated = truncated = True
             # self.t = 0
@@ -333,6 +415,7 @@ class CrystalGymEnv(gym.Env):
         else:
             terminated = truncated = False
             reward = 0.0
+
         return self.state, reward, terminated, truncated, info
     
     def graph_to_dict_complete(self, observations):
@@ -379,7 +462,12 @@ class CrystalGymEnv(gym.Env):
         angles = state_dict['angles'].tolist()
         lattice_params = lengths + angles
         atomic_number = state_dict['atom_types']
-        atom_types = [SPECIES_IND_SMALL[int(atomic_number[j])] for j in range(atomic_number.shape[0])]
+        if self.vocab == 'small':
+            atom_types = [SPECIES_IND_SMALL[int(atomic_number[j])] for j in range(atomic_number.shape[0])]
+        elif self.vocab == 'medium':
+            atom_types = [SPECIES_IND_MEDIUM[int(atomic_number[j])] for j in range(atomic_number.shape[0])]
+        elif self.vocab == 'large':
+            atom_types = [SPECIES_IND_LARGE[int(atomic_number[j])] for j in range(atomic_number.shape[0])]      
         coords = state_dict['frac_coords']
         canonical_crystal = Structure(lattice = Lattice.from_parameters(*lattice_params),
                                     species = atom_types, coords = coords)

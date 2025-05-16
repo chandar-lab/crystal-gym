@@ -1,25 +1,25 @@
 import os
-import random
-import time
-import gymnasium as gym
-import numpy as np
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-
-from torch.utils.tensorboard import SummaryWriter
-from crystal_gym.agents import MEGNetRL
+import random
+import numpy as np
 import hydra
-from omegaconf import DictConfig, OmegaConf
-from crystal_gym.env import CrystalGymEnv
-from copy import deepcopy
-from torchrl.data import ReplayBuffer, ListStorage
-from functools import partial
-from crystal_gym.utils import collate_function
 import signal
+import time
+from functools import partial
 import wandb
-
+import torch.optim as optim
+import torch.nn as nn
+from omegaconf import DictConfig, OmegaConf
+from torch.utils.tensorboard import SummaryWriter
+from torch.nn import Linear, Sequential, ReLU
+from torchrl.data import ReplayBuffer, ListStorage, PrioritizedReplayBuffer
+from crystal_gym.agents import MEGNetRL
+from crystal_gym.utils import collate_function
+from copy import deepcopy
+from crystal_gym.env import CrystalGymEnv
+import torch.nn.functional as F
+import gymnasium as gym
+from collections import deque
 
 
 caught_signal = False
@@ -28,6 +28,19 @@ def catch_signal(sig, frame):
     global caught_signal
     caught_signal = True
 
+def multi_step_reward(rewards, gamma):
+    ret = 0.
+    for idx, reward in enumerate(rewards):
+        ret += reward * (gamma ** idx)
+    return ret
+
+def beta_schedule(start_beta: float, end_beta: float, duration: int, t: int):
+    slope = (end_beta - start_beta) / duration
+    return min(slope * t + start_beta, end_beta)
+
+def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
+    slope = (end_e - start_e) / duration
+    return max(slope * t + start_e, end_e)
 
 def make_env(env_id, idx, capture_video, run_name, kwargs):
     def thunk():
@@ -41,38 +54,55 @@ def make_env(env_id, idx, capture_video, run_name, kwargs):
 
     return thunk
 
-# ALGO LOGIC: initialize agent here:
-class QNetwork(nn.Module):
-    def __init__(self, env, type = "mlp"):
+class RainbowAgent(nn.Module):
+    def __init__(self, 
+                 env,
+                 type, 
+                 dueling) -> None:
+        # ...
         super().__init__()
-
-        if type == "mlp":
-            self.network = nn.Sequential(
-                nn.Linear(np.array(env.single_observation_space.shape).prod(), 120),
-                nn.ReLU(),
-                nn.Linear(120, 84),
-                nn.ReLU(),
-                nn.Linear(84, env.single_action_space.n),
-            )
-        elif type == "MEGNetRL":
-            self.qnet = MEGNetRL(num_actions = env.single_action_space.n,
-                                 ntypes_state =  env.single_action_space.n)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.type = type
+        if self.type == 'MEGNetRL':
+            if dueling:
+                self.qnet = MEGNetRL(num_actions = env.single_action_space.n,
+                                    ntypes_state =  env.single_action_space.n, critic=False)
+
+                self.value = Sequential(
+                                        Linear(env.single_action_space.n, 64),
+                                        ReLU(),
+                                        Linear(64, 64),
+                                        ReLU(),
+                                        Linear(64, 1),
+                                    )
+                self.advantage = Sequential(
+                                        Linear(env.single_action_space.n, 64),
+                                        ReLU(),
+                                        Linear(64, 64),
+                                        ReLU(),
+                                        Linear(64, env.single_action_space.n),
+                                    )
+            else:
+                                    
+                self.qnet = MEGNetRL(num_actions = env.single_action_space.n,
+                                    ntypes_state =  env.single_action_space.n, critic=False)
+        
+        
+        # ...
 
     def forward(self, x):
-        if self.type == "mlp":
-            return self.network(x)
-        elif self.type == "MEGNetRL":
-            q_vals = self.qnet(x,x.edata['e_feat'], x.ndata['atomic_number'], x.lengths_angles_focus)
-            return q_vals
+        # ...
+        features = self.qnet(x,x.edata['e_feat'], x.ndata['atomic_number'], x.lengths_angles_focus)
+        if self.type == 'MEGNetRL':
+            value = self.value(features)
+            advantage = self.advantage(features)
+            x = value + advantage - advantage.mean()
+        else:
+            x = features
+        return x
 
 
-def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
-    slope = (end_e - start_e) / duration
-    return max(slope * t + start_e, end_e)
-
-
-@hydra.main(version_base = None, config_path="../config", config_name="dqn")
+@hydra.main(version_base = None, config_path="../config", config_name="rainbow")
 def main(args: DictConfig) -> None:
     
     
@@ -94,24 +124,42 @@ def main(args: DictConfig) -> None:
 
     kwargs = {'env':dict(args.env), 'qe': dict(args.qe)}
     kwargs['env']['run_name'] = run_name
+    kwargs['env']['agent'] = args.algo.agent
+
     envs = make_env(args.algo.env_id, 0, args.exp.capture_video, run_name, kwargs)()
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
-    q_network = QNetwork(envs, type = "MEGNetRL").to(device)
+    q_network = RainbowAgent(envs, type = "MEGNetRL", dueling = args.algo.dueling).to(device)
     optimizer = optim.Adam(q_network.parameters(), lr=args.algo.learning_rate)
-    target_network = QNetwork(envs, type = "MEGNetRL").to(device)
+    target_network = RainbowAgent(envs, type = "MEGNetRL", dueling = args.algo.dueling).to(device)
     target_network.load_state_dict(q_network.state_dict())
 
-    rb = ReplayBuffer(
-        storage=ListStorage(max_size=args.algo.buffer_size),
-        batch_size = args.algo.batch_size,
-        collate_fn = partial(collate_function, p_hat = args.env.p_hat),
-        pin_memory = True,
-        prefetch = 16,
-    )
+    if args.algo.replay_type == "uniform":
+        rb = ReplayBuffer(
+            storage=ListStorage(max_size=args.algo.buffer_size),
+            batch_size = args.algo.batch_size,
+            collate_fn = partial(collate_function, p_hat = args.env.p_hat, agent = args.algo.agent),
+            pin_memory = True,
+            prefetch = 16,
+        )
+    elif args.algo.replay_type == "prioritized":
+        rb = PrioritizedReplayBuffer(
+                    alpha=0.6,
+                    beta=0.4,
+                    storage=ListStorage(max_size=args.algo.buffer_size),
+                    batch_size = args.algo.batch_size,
+                    collate_fn = partial(collate_function, p_hat = args.env.p_hat, agent = args.algo.agent),
+                    pin_memory = True,
+                    prefetch = 16,
+                )
 
+    state_deque = deque(maxlen=args.algo.multi_step)
+    reward_deque = deque(maxlen=args.algo.multi_step)
+    action_deque = deque(maxlen=args.algo.multi_step)
 
     # SAVE AND LOAD
+    if args.env.p_hat == 5.0:
+        run_name += "_p5"
     save_path = os.path.join(os.getcwd(), "models", run_name)
     try:
         start_iteration = 0
@@ -135,10 +183,16 @@ def main(args: DictConfig) -> None:
 
             rb_state = run_state["states"]["rb"]
             rb.extend(rb_state["_storage"]["_storage"])
-
+            if args.algo.replay_type == "prioritized":
+                rb.sampler.load_state_dict(rb_state["_sampler"])
             run_id = run_state["run_id"]
     
             start_iteration = global_step = run_state["global_step"]
+
+            # state_deque = run_state["queues"]["state"]
+            # reward_deque = run_state["queues"]["reward"]
+            # action_deque = run_state["queues"]["action"]
+        
     
             print("Resuming from iteration ", start_iteration)
         
@@ -202,7 +256,15 @@ def main(args: DictConfig) -> None:
          #       real_next_obs[idx] = infos["final_observation"][idx]
         obs_dict = envs.graph_to_dict(obs)
         next_obs_dict = envs.graph_to_dict(real_next_obs)
-        rb.add((obs_dict, next_obs_dict, actions, rewards, terminations, infos))
+
+        state_deque.append(obs_dict)
+        reward_deque.append(rewards)
+        action_deque.append(actions)
+        if len(state_deque) == args.algo.multi_step or terminations:
+            n_reward = multi_step_reward(reward_deque, args.algo.gamma)
+            n_state = state_deque[0]
+            n_action = action_deque[0]
+            rb.add((n_state, next_obs_dict, n_action, n_reward, terminations, infos))
         
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         if not terminations:
@@ -210,11 +272,32 @@ def main(args: DictConfig) -> None:
         else:
             obs, _ = envs.reset()
             obs = obs.to(device)
+            state_deque.popleft()
+            reward_deque.popleft()
+            action_deque.popleft()
+            
+            for i in range(len(state_deque)):
+                n_reward = multi_step_reward(reward_deque, args.algo.gamma)
+                n_state = state_deque[i]
+                n_action = action_deque[i]
+                if i + 1 <= len(state_deque) - 1:
+                    next_obs_dict_old = state_deque[i+1]
+                else:
+                    next_obs_dict_old = deepcopy(next_obs_dict)
+                rb.add((n_state, next_obs_dict_old, n_action, n_reward, terminations, infos))
+                reward_deque.popleft()
+
+            state_deque.clear()
+            reward_deque.clear()
+            action_deque.clear()
 
         # ALGO LOGIC: training.
         if global_step > args.algo.learning_starts:
             if global_step % args.algo.train_frequency == 0:
-                data = rb.sample()
+                if args.algo.replay_type == "uniform":
+                    data = rb.sample()
+                elif args.algo.replay_type == "prioritized":
+                    data, info = rb.sample(return_info=True)
                 (
                     observations_sampled,
                     next_observations_sampled,
@@ -225,10 +308,20 @@ def main(args: DictConfig) -> None:
                 rewards_sampled = rewards_sampled.to(dtype=torch.float32)
                 # data = rb.sample(args.batch_size)
                 with torch.no_grad():
-                    target_max, _ = target_network(next_observations_sampled).max(dim=1)
-                    td_target = rewards_sampled.flatten() + args.algo.gamma * target_max * (1.0 - dones_sampled.flatten().to(torch.float32))
+                    target_qvals = target_network(next_observations_sampled)
+                    if args.algo.double:
+                        next_actions = torch.argmax(q_network(next_observations_sampled), dim=1)
+                        target_max = target_qvals.gather(1, next_actions.unsqueeze(1)).squeeze()
+                    else:
+                        target_max, _ = target_qvals.max(dim=1)
+                    td_target = rewards_sampled.flatten() + (args.algo.gamma ** args.algo.multi_step) * target_max * (1.0 - dones_sampled.flatten().to(torch.float32))
                 old_val = q_network(observations_sampled).gather(1, actions_sampled.unsqueeze(1)).squeeze()
                 loss = F.mse_loss(td_target, old_val)
+
+                if args.algo.replay_type == "prioritized":
+                    rb.update_priority(info["index"], loss.cpu().detach().numpy())
+                    beta = beta_schedule(0.4, 1.0, args.algo.total_timesteps, global_step - args.algo.learning_starts)
+                    rb.sampler._beta = beta
 
                 if global_step % 100 == 0:
                     writer.add_scalar("losses/td_loss", loss, global_step)
@@ -249,12 +342,14 @@ def main(args: DictConfig) -> None:
                     )
         if (global_step % args.exp.save_freq == 0 or caught_signal) and global_step > 0:
             states = {"q_network": q_network.state_dict(), "target_network": target_network.state_dict(), "optimizer": optimizer.state_dict(), "rb": rb.state_dict()}
+            # queues = {"state": state_deque, "reward": reward_deque, "action": action_deque}
 
             run_state = {
                             "run_name": run_name,
                             "run_id": run_id,
                             "global_step": global_step,
-                            "states": states
+                            "states": states,
+                            # "queues": queues,
                         }
             torch.save(run_state, os.path.join(save_path, f"ckpt_{global_step}.pt"))
             files = os.listdir(save_path)

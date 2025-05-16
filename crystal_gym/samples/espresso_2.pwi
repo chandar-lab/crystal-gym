@@ -1,0 +1,54 @@
+&CONTROL
+   calculation      = 'vc-relax'
+   verbosity        = 'high'
+   nstep            = 1
+   tstress          = .false.
+   tprnfor          = .false.
+   outdir           = 'calculations'
+   prefix           = 'myprefix'
+   pseudo_dir       = '/absolute/path/to/pseudo_dir'
+/
+&SYSTEM
+   nbnd             = 114
+   ecutwfc          = 50
+   ecutrho          = 400
+   occupations      = 'smearing'
+   degauss          = 0.001
+   smearing         = 'gaussian'
+   nspin            = 1
+   ntyp             = 1
+   nat              = 5
+   ibrav            = 0
+/
+&ELECTRONS
+   electron_maxstep = 300
+   mixing_mode      = 'plain'
+   mixing_beta      = 0.7
+   diagonalization  = 'david'
+/
+&IONS
+/
+&CELL
+/
+&FCP
+/
+&RISM
+/
+ATOMIC_SPECIES
+Sr 87.62 Sr_pbe_v1.uspp.F.UPF
+
+K_POINTS automatic
+5 5 5  0 0 0
+
+CELL_PARAMETERS angstrom
+6.68642807006836 0.00000000000000 0.00000000000000
+-0.00000000000000 6.68642807006836 0.00000000000000
+0.00000000000000 0.00000000000000 6.68642807006836
+
+ATOMIC_POSITIONS angstrom
+Sr 0.0000000000 0.0000000000 0.0000000000  
+Sr 1.5639759220 5.1224513510 5.1224525466  
+Sr 5.1224521480 1.5639747264 5.1224525466  
+Sr 5.1224525466 5.1224513510 1.5639757227  
+Sr 1.5639756231 1.5639752246 1.5639757227  
+

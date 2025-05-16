@@ -1,20 +1,20 @@
-prefix: myprefix
-electron_maxstep: 300
-outdir: calculations
-pseudo_dir: /home/mila/p/prashant.govindarajan/scratch/crystal_design_project/crystal-gym/crystal_gym/files/SSSP
-pseudodict: /home/mila/p/prashant.govindarajan/scratch/crystal_design_project/crystal-gym/crystal_gym/files/pseudodict.pkl
-qe_dir: /home/mila/p/prashant.govindarajan/scratch/qe-7.3.1
-tstress: false
-tprnfor: false
-calculation: scf
-ecutwfc: 50
-ecutrho: 400
-verbosity: high
-diagonalization: david
-occupations: fixed
-smearing: gaussian
-mixing_mode: plain
-mixing_beta: 0.7
-degauss: 0.001
-nspin: 1
-kppa: 1000
+prefix: myprefix #   Prefix for the output files
+electron_maxstep: 300 # Maximum number of SCF steps
+outdir: calculations # Output directory for Quantum ESPRESSO
+pseudo_dir: /absolute/path/to/SSSP # Change path to SSSP (provide absolute path)
+pseudodict: ../files/pseudodict.pkl # Path to the pseudodict
+qe_dir: /path/to/qe-7.3.1 # Change path to Quantum ESPRESSO (provide absolute path)
+tstress: false # Calculate stress (useful for Shear modulus)
+tprnfor: false  # Calculate forces (useful for Shear modulus)
+calculation: scf # Type of calculation
+ecutwfc: 50 # Plane wave cutoff energy
+ecutrho: 400 # Charge density cutoff energy
+verbosity: high # Verbosity level
+diagonalization: david # Diagonalization method 
+occupations: fixed #  Occupations type
+smearing: gaussian  # Smearing type 
+mixing_mode: plain #   Mixing mode
+mixing_beta: 0.7 # Mixing beta
+degauss: 0.001 #  Gaussian smearing width
+nspin: 1 #   Spin polarized calculation
+kppa: 1000 #   k-point density
