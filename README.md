@@ -76,7 +76,6 @@ The CrystalGym environment class is defined in `crystal_gym/env/crystal_env.py`.
 import gymnasium as gym
 from crystal_gym.env import CrystalGymEnv
 import yaml
-import yaml
 import random
 
 with open('config/qe/qe.yaml', 'r') as file:
