@@ -9,7 +9,7 @@ A Gymnasium environment for generating crystalline materials based on DFT reward
 
 Installation of `conda` environment (deactivate all existing environments before creating a new environment)
 
-`conda create --name crystalgym python=3.10`
+`conda create --name crystalgym python=3.11`
 
 ### Installing requirements
 
