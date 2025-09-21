@@ -1,76 +1,155 @@
-# CrystalGym - A New Benchmark for Materials Discovery Using Reinforcement Learning
+# CrystalGym 🧊
 
-A Gymnasium environment for generating crystalline materials based on DFT rewards. 
+[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/release/python-3110/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Gymnasium](https://img.shields.io/badge/Gymnasium-0.29+-green.svg)](https://gymnasium.farama.org/)
+
+> **A Gymnasium environment for generating crystalline materials using reinforcement learning with DFT-based rewards**
 
 ![CrystalGym](figs/crystalgym.png)
 
+## 📋 Table of Contents
 
-## Installation of CrystalGym
+- [Overview](#overview)
+- [Features](#features)
+- [Installation](#installation)
+  - [Environment Setup](#environment-setup)
+  - [Dependencies](#dependencies)
+  - [Pseudopotentials](#pseudopotentials)
+- [Quantum Espresso Setup](#quantum-espresso-setup)
+- [Quick Start](#quick-start)
+- [Training Examples](#training-examples)
+- [Documentation](#documentation)
+- [Acknowledgements](#acknowledgements)
+- [License](#license)
 
-Installation of `conda` environment (deactivate all existing environments before creating a new environment)
+## 🎯 Overview
 
-`conda create --name crystalgym python=3.11`
+CrystalGym is a comprehensive reinforcement learning environment designed for materials discovery. It provides a standardized interface for training RL agents to generate crystalline materials with desired properties using density functional theory (DFT) calculations as rewards.
 
-### Installing requirements
+## ✨ Features
 
-- `cd crystal-gym`
+- 🏗️ **Gymnasium-compatible environment** for RL training
+- ⚛️ **DFT-based rewards** using Quantum Espresso
+- 🧪 **Multiple crystal optimization modes** (single, mixed)
+- 📊 **Various material properties** (bulk modulus, density, band gap)
+- 🔧 **Easy configuration** via YAML files
+- 🚀 **Multiple RL algorithms** (DQN, PPO, SAC, Rainbow)
 
-- `pip install -r requirements.txt`
+## 🚀 Installation
 
-- `pip install -e .`
+### Environment Setup
 
-### Extract Psedopotentials
+Create a new conda environment (deactivate existing environments first):
 
-- `cd crystal_gym/files`
+```bash
+conda create --name crystalgym python=3.11
+conda activate crystalgym
+```
 
-Download Standard solid-state pseudopotentials (SSSP v1.3.0) from https://www.materialscloud.org/discover/sssp 
+### Dependencies
 
-- `tar -xvf SSSP.tar.gz` 
+Navigate to the project directory and install dependencies:
 
-## Installation of Quantum Espresso (with CUDA support)
+```bash
+cd crystal-gym
+pip install -r requirements.txt
+pip install -e .
+```
 
-To install Quantum Espresso (QE) with CUDA support, you would need
+### Pseudopotentials
 
-1. Access to V100/RTX/A100/H100 (not exhaustive) GPU
+Download and extract the Standard Solid-State Pseudopotentials (SSSP v1.3.0):
 
-2. Nvidia High Performance Computing (NVHPC) SDK is necessary. If you do not have it pre-installed in your system, please follow the instructions provided in their [offlicial website](https://docs.nvidia.com/hpc-sdk/). The version that we used is 23.7, but the later versions would also work. 
+```bash
+cd crystal_gym/files
+# Download from: https://www.materialscloud.org/discover/sssp
+tar -xvf SSSP.tar.gz
+``` 
 
-3. CUDA 12.* (we use v 12.2)
+## ⚛️ Quantum Espresso Setup
 
-4. OpenMPI and OpenMP support
+### Prerequisites
 
-Steps to install QE
+Before installing Quantum Espresso with CUDA support, ensure you have:
 
-1. Download Quantum Espresso (v 7.3.1 or a version of your choice) from https://www.quantum-espresso.org/download-page/ after registering with your details. 
-2. Extract the downloaded file: `tar -xvf qe-7.3.1-ReleasePack.tar.gz`
-3. `cd qe-7.3.1`
-4. `module purge`
-5. `module load cuda/12.2`
-6. `module load nvhpc/23.7`
-7. `export NVHPC_CUDA_HOME="$CUDA_HOME"`
-8. `./configure --prefix=/path/to/qe-7.3.1 --enable-openmp --enable-parallel --with-cuda="$NVHPC_CUDA_HOME" --with-cuda-runtime=12.2 --with-cuda-cc=80 --with-cuda-mpi=yes`
-9. Note: In step 8, . 
-    - `--with-cuda-cc=80` for A100 GPU
-    - `--with-cuda-cc=70` for V100/RTX GPU
-    - `--with-cuda-cc=89` for L40 GPU
-    - `--with-cuda-cc=90` for H100 GPU
-10. `make -j8 pw`
-11. `make install`
+- **GPU Access**: V100, RTX, A100, H100, or compatible GPU
+- **NVIDIA HPC SDK**: Version 23.7+ (see [official documentation](https://docs.nvidia.com/hpc-sdk/))
+- **CUDA**: Version 12.2 or compatible
+- **OpenMPI & OpenMP**: For parallel processing support
 
-If you do not face any errors while doing the above steps, your compilation is successful. 
+### Installation Steps
 
-## Testing Quantum Espresso
-In the `crystal_gym/samples` folder we provide some sample QE input files (`.pwi`), which you can use for testing if the installation is successful. 
-1. cd `crystal_gym/samples`
-2. In `espresso_<id>.pwi`, change `pseudo_dir` in `&CONTROL` to the absolute path of the `crystal_gym/files/SSSP` folder. 
-3. `mpirun --bind-to none  -np 1 /path/to/qe-7.3.1/bin/pw.x -in espresso_<id>.pwi > espresso_<id>.pwo`
-4. If the above command fails, try without `--bind-to none`
-5. If Step 3. succeeds you should be able to see the output of the simulation in `espresso_<id>.pwo`
+1. **Download and Extract Quantum Espresso**
+   ```bash
+   # Register and download from: https://www.quantum-espresso.org/download-page/
+   tar -xvf qe-7.3.1-ReleasePack.tar.gz
+   cd qe-7.3.1
+   ```
 
-## The CrystalGym Environment. 
+2. **Load Required Modules**
+   ```bash
+   module purge
+   module load cuda/12.2
+   module load nvhpc/23.7
+   export NVHPC_CUDA_HOME="$CUDA_HOME"
+   ```
 
-The CrystalGym environment class is defined in `crystal_gym/env/crystal_env.py`. To load the environment
+3. **Configure Quantum Espresso**
+   ```bash
+   ./configure --prefix=/path/to/qe-7.3.1 \
+               --enable-openmp \
+               --enable-parallel \
+               --with-cuda="$NVHPC_CUDA_HOME" \
+               --with-cuda-runtime=12.2 \
+               --with-cuda-cc=80 \
+               --with-cuda-mpi=yes
+   ```
 
+4. **Compile and Install**
+   ```bash
+   make -j8 pw
+   make install
+   ```
+
+   > **Note**: Choose the appropriate `--with-cuda-cc` flag for your GPU:
+   > - `80` for A100 GPU
+   > - `70` for V100/RTX GPU  
+   > - `89` for L40 GPU
+   > - `90` for H100 GPU
+
+4. **Verify Installation**
+   ```bash
+   # Test the installation
+   /path/to/qe-7.3.1/bin/pw.x --version
+   ``` 
+
+### Testing Quantum Espresso
+
+Test your QE installation using the provided sample files:
+
+```bash
+cd crystal_gym/samples
+
+# Update the pseudopotential directory path in the input file
+# Edit espresso_<id>.pwi and change pseudo_dir to your SSSP folder path
+
+# Run a test calculation
+mpirun --bind-to none -np 1 /path/to/qe-7.3.1/bin/pw.x \
+       -in espresso_<id>.pwi > espresso_<id>.pwo
+
+# If the above fails, try without --bind-to none
+mpirun -np 1 /path/to/qe-7.3.1/bin/pw.x \
+       -in espresso_<id>.pwi > espresso_<id>.pwo
+```
+
+Check the output file `espresso_<id>.pwo` to verify successful execution.
+
+## 🚀 Quick Start
+
+### Basic Usage
+
+The CrystalGym environment is defined in `crystal_gym/env/crystal_env.py`. Here's how to get started:
 
 ```python
 import gymnasium as gym
@@ -78,91 +157,130 @@ from crystal_gym.env import CrystalGymEnv
 import yaml
 import random
 
+# Load configuration files
 with open('config/qe/qe.yaml', 'r') as file:
     qe_args = yaml.safe_load(file)
 
 with open('config/env/env.yaml', 'r') as file:
     env_args = yaml.safe_load(file)
 
+# Configure environment
 env_args['run_name'] = 'sample'
 kwargs = {
     'env': env_args, 
     'qe': qe_args, 
 }
 
-env = gym.make("CrystalGymEnv-v0", kwargs = kwargs)
+# Create and initialize environment
+env = gym.make("CrystalGymEnv-v0", kwargs=kwargs)
+initial_state, info = env.reset()
 
-intitial_state, info = env.reset()
+# Run a simple episode
 actions = [random.randint(0, 10) for _ in range(env.n_sites)]
 
 for action in actions:
     state, reward, terminated, truncated, info = env.step(action)
-print("Reward: ", reward)
-print("Info: ", info)
+    
+print(f"Final Reward: {reward}")
+print(f"Episode Info: {info}")
 ```
 
-For further details about the arguments that have to be modified for each of the CrystalGym tasks we performed, and QE parameters, please check `env.yaml` and `qe.yaml` in the `crystal_gym/config` folder.  
+### Configuration
 
-## Training RL algorithm. 
-In the example below, we show how to train the DQN algorithm, for the single crystal case, optimizing for the bulk modulus. 
+For detailed configuration options, refer to the YAML files in `crystal_gym/config/`:
+- `env.yaml` - Environment parameters
+- `qe.yaml` - Quantum Espresso settings  
 
-```
-python dqn.py exp.exp_name="bm-single" \ 
-              env.index=3403 # C1 crystal - choose another index for different crystal \ 
-              env.property="bm" \ 
+## 🎯 Training Examples
+
+### Single Crystal Optimization
+
+#### Bulk Modulus Optimization
+```bash
+python dqn.py exp.exp_name="bm-single" \
+              env.index=3403 \
+              env.property="bm" \
               env.p_hat=300.0 \
-              qe.occupations="smearing" \ 
-              qe.calculation="scf" \ 
-              env.mode="single" # for single crystal optimization \
+              qe.occupations="smearing" \
+              qe.calculation="scf" \
+              env.mode="single"
 ```
 
-For density, 
-
-```
-python dqn.py exp.exp_name="density-single" \ 
-              env.index=3403 # C1 crystal - choose another index for different crystal \ 
-              env.property="density" \ 
+#### Density Optimization
+```bash
+python dqn.py exp.exp_name="density-single" \
+              env.index=3403 \
+              env.property="density" \
               env.p_hat=3.0 \
-              qe.occupations="smearing" \ 
-              qe.calculation="vc-relax" \ 
-              env.mode="single" # for single crystal optimization \
+              qe.occupations="smearing" \
+              qe.calculation="vc-relax" \
+              env.mode="single"
 ```
-For band gap, 
 
-```
-python dqn.py exp.exp_name="band_gap-single" \ 
-              env.index=3403 # C1 crystal - choose another index for different crystal \ 
-              env.property="band_gap" \ 
+#### Band Gap Optimization
+```bash
+python dqn.py exp.exp_name="band_gap-single" \
+              env.index=3403 \
+              env.property="band_gap" \
               env.p_hat=1.12 \
-              qe.occupations="fixed" \ 
-              qe.calculation="scf" \ 
-              env.mode="single" # for single crystal optimization \
+              qe.occupations="fixed" \
+              qe.calculation="scf" \
+              env.mode="single"
 ```
 
-Note the difference in the QE arguments for each property. `env.index` is the index of the crystals in the validation set of MP-20. 
+### Mixed Crystal Optimization
 
-For mixed crystals
-
-```
-python dqn.py exp.exp_name="density-mixed" \ 
-              env.index="blank" # arbitrary name for mixed crystals \ 
-              env.property="density" \ 
+```bash
+python dqn.py exp.exp_name="density-mixed" \
+              env.index="blank" \
+              env.property="density" \
               env.p_hat=3.0 \
-              qe.occupations="smearing" \ 
-              qe.calculation="vc-relax" \ 
-              env.mode="cubic_mini" # for single crystal optimization \
+              qe.occupations="smearing" \
+              qe.calculation="vc-relax" \
+              env.mode="cubic_mini"
 ```
 
-Please refer to the respective config files of Rainbow, PPO, and SAC for knowing about the algorithm-specific hyperparameters. 
+### Algorithm-Specific Training
 
-## Acknowledgements
-1. CDVAE (https://github.com/txie-93/cdvae) for data and multi-graph representation
-2. CleanRL (https://github.com/vwxyzjn/cleanrl) for the codes for PPO, Rainbow, SAC, and DQN
-3. MEGNet (http://github.com/materialsvirtuallab/matgl)
-4. PyMatGen (https://github.com/materialsproject/pymatgen)
-5. ASE (https://wiki.fysik.dtu.dk/ase/)
-6. SSSP PBEsol Precision v1.3.0 (https://www.materialscloud.org/discover/sssp)
+For other RL algorithms (Rainbow, PPO, SAC), refer to their respective configuration files for algorithm-specific hyperparameters.
 
+> **Note**: 
+> - `env.index` refers to crystal indices from the MP-20 validation set
+> - Different properties require different QE calculation types and occupation settings
+> - Use `env.mode="single"` for single crystal optimization and `env.mode="cubic_mini"` for mixed crystals 
 
-## License
-Code repository is licensed under the permissive MIT license.
+## 📚 Documentation
+
+For comprehensive documentation, API reference, and advanced usage examples, please refer to:
+
+- **API Documentation**: Detailed class and method references
+- **Configuration Guide**: Complete parameter descriptions
+- **Tutorials**: Step-by-step guides for common tasks
+- **Examples**: Additional training scripts and use cases
+
+## 🙏 Acknowledgements
+
+We gratefully acknowledge the following open-source projects and resources:
+
+| Project | Purpose | Link |
+|---------|---------|------|
+| **CDVAE** | Data and multi-graph representation | [GitHub](https://github.com/txie-93/cdvae) |
+| **CleanRL** | RL algorithm implementations (PPO, Rainbow, SAC, DQN) | [GitHub](https://github.com/vwxyzjn/cleanrl) |
+| **MEGNet** | Materials property prediction | [GitHub](http://github.com/materialsvirtuallab/matgl) |
+| **PyMatGen** | Materials analysis toolkit | [GitHub](https://github.com/materialsproject/pymatgen) |
+| **ASE** | Atomic simulation environment | [Website](https://wiki.fysik.dtu.dk/ase/) |
+| **SSSP** | Standard solid-state pseudopotentials | [Materials Cloud](https://www.materialscloud.org/discover/sssp) |
+
+## 📄 License
+
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+
+---
+
+<div align="center">
+
+**CrystalGym** - Accelerating materials discovery through reinforcement learning
+
+[Report Bug](https://github.com/your-username/crystal-gym/issues) • [Request Feature](https://github.com/your-username/crystal-gym/issues) • [Documentation](https://github.com/your-username/crystal-gym/wiki)
+
+</div>
