@@ -20,6 +20,7 @@
 - [Quick Start](#quick-start)
 - [Training Examples](#training-examples)
 - [Documentation](#documentation)
+- [To Do](#-to-do)
 - [Acknowledgements](#acknowledgements)
 - [License](#license)
 
@@ -40,7 +41,7 @@ CrystalGym is a comprehensive reinforcement learning environment designed for ma
 
 ### Environment Setup
 
-Create a new conda environment (deactivate existing environments first):
+Create a new conda environment (deactivate any existing environments first):
 
 ```bash
 conda create --name crystalgym python=3.11
@@ -49,7 +50,7 @@ conda activate crystalgym
 
 ### Dependencies
 
-Navigate to the project directory and install dependencies:
+Navigate to the project directory and install the dependencies:
 
 ```bash
 cd crystal-gym
@@ -63,8 +64,10 @@ Download and extract the Standard Solid-State Pseudopotentials (SSSP v1.3.0):
 
 ```bash
 cd crystal_gym/files
-# Download from: https://www.materialscloud.org/discover/sssp
-tar -xvf SSSP.tar.gz
+# Download SSSP_1.3.0_PBE_efficiency.tar.gz from: https://www.materialscloud.org/discover/sssp
+wget https://archive.materialscloud.org/api/records/rcyfm-68h65/files/SSSP_1.3.0_PBE_efficiency.tar.gz/content -O SSSP_1.3.0_PBE_efficiency.tar.gz
+mkdir SSSP
+tar -xvf SSSP_1.3.0_PBE_efficiency.tar.gz -C SSSP
 ``` 
 
 ## ⚛️ Quantum Espresso Setup
@@ -118,7 +121,7 @@ Before installing Quantum Espresso with CUDA support, ensure you have:
    > - `89` for L40 GPU
    > - `90` for H100 GPU
 
-4. **Verify Installation**
+5. **Verify Installation**
    ```bash
    # Test the installation
    /path/to/qe-7.3.1/bin/pw.x --version
@@ -149,7 +152,18 @@ Check the output file `espresso_<id>.pwo` to verify successful execution.
 
 ### Basic Usage
 
+First, load the required CUDA and NVHPC modules (as mentioned in [Quantum Espresso Setup](#quantum-espresso-setup)) and optionally enable OpenMP threading. 
+
+```bash
+module load cuda/12.2
+module load nvhpc/23.7
+export OMP_NUM_THREADS=2
+```
+
+Next, modify the appropriate paths in `config/qe/qe.yaml` (QE, SSSP, and pseudodict.pkl) and `config/env/env.yaml` (data). 
+
 The CrystalGym environment is defined in `crystal_gym/env/crystal_env.py`. Here's how to get started:
+
 
 ```python
 import gymnasium as gym
@@ -158,10 +172,10 @@ import yaml
 import random
 
 # Load configuration files
-with open('config/qe/qe.yaml', 'r') as file:
+with open('path/to/config/qe/qe.yaml', 'r') as file:
     qe_args = yaml.safe_load(file)
 
-with open('config/env/env.yaml', 'r') as file:
+with open('path/to/config/env/env.yaml', 'r') as file:
     env_args = yaml.safe_load(file)
 
 # Configure environment
@@ -176,13 +190,23 @@ env = gym.make("CrystalGymEnv-v0", kwargs=kwargs)
 initial_state, info = env.reset()
 
 # Run a simple episode
-actions = [random.randint(0, 10) for _ in range(env.n_sites)]
-
-for action in actions:
+terminated = truncated = False
+while not terminated and not truncated:
+    action = env.action_space.sample()
     state, reward, terminated, truncated, info = env.step(action)
+
+# Print outputs
+
+error_flag = info["error_flag"]
+
+if error_flag:
+    print("DFT error!")
+else:
+    print("DFT success!")
     
 print(f"Final Reward: {reward}")
-print(f"Episode Info: {info}")
+print(f"Property Value: {info['final_info'][0]['episode']['prop']}")
+print(f"Simulation Time: {info['final_info'][0]['episode']['sim_time']} seconds")
 ```
 
 ### Configuration
@@ -249,14 +273,11 @@ For other RL algorithms (Rainbow, PPO, SAC), refer to their respective configura
 > - Different properties require different QE calculation types and occupation settings
 > - Use `env.mode="single"` for single crystal optimization and `env.mode="cubic_mini"` for mixed crystals 
 
-## 📚 Documentation
+## 📋 To Do
 
-For comprehensive documentation, API reference, and advanced usage examples, please refer to:
-
-- **API Documentation**: Detailed class and method references
-- **Configuration Guide**: Complete parameter descriptions
-- **Tutorials**: Step-by-step guides for common tasks
-- **Examples**: Additional training scripts and use cases
+- ☐ Prevent warnings 
+- ☐ Support for other MLIPs (e.g. MACE, M3GNet, etc.)
+- ☐ Optimize `env.reset` method for improved speed
 
 ## 🙏 Acknowledgements
 
@@ -281,6 +302,6 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 **CrystalGym** - Accelerating materials discovery through reinforcement learning
 
-[Report Bug](https://github.com/your-username/crystal-gym/issues) • [Request Feature](https://github.com/your-username/crystal-gym/issues) • [Documentation](https://github.com/your-username/crystal-gym/wiki)
+[Report Bug](https://github.com/chandar-lab/crystal-gym/issues) • [Request Feature](https://github.com/chandar-lab/crystal-gym/issues) • [Documentation](https://github.com/chandar-lab/crystal-gym/wiki)
 
 </div>

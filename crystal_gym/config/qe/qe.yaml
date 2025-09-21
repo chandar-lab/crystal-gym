@@ -1,8 +1,8 @@
 prefix: myprefix #   Prefix for the output files
 electron_maxstep: 300 # Maximum number of SCF steps
 outdir: calculations # Output directory for Quantum ESPRESSO
-pseudo_dir: /absolute/path/to/SSSP # Change path to SSSP (provide absolute path)
-pseudodict: ../files/pseudodict.pkl # Path to the pseudodict
+pseudo_dir: /absolute/path/to/files/SSSP # Change path to SSSP (provide absolute path)
+pseudodict: /path/to/files/pseudodict.pkl # Change path to the pseudodict.pkl
 qe_dir: /path/to/qe-7.3.1 # Change path to Quantum ESPRESSO (provide absolute path)
 tstress: false # Calculate stress (useful for Shear modulus)
 tprnfor: false  # Calculate forces (useful for Shear modulus)
