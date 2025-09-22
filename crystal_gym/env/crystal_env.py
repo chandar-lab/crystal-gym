@@ -187,12 +187,11 @@ class CrystalGymEnv(gym.Env):
         return state, info
 
   
-    def calculate_bm(self, atoms, celldm) -> Tuple[Optional[float], int]:
+    def calculate_bm(self, atoms) -> Tuple[Optional[float], int]:
         """Calculate the bulk modulus using equation of state fitting.
         
         Args:
             atoms: ASE Atoms object representing the crystal structure
-            celldm: Cell dimension parameter (unused but kept for compatibility)
             
         Returns:
             Tuple of (bulk_modulus, error_flag):
