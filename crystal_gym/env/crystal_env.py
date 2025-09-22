@@ -579,7 +579,7 @@ class CrystalGymEnv(gym.Env):
             coords=coords
         )
 
-    def render(self, mode: str = "human") -> Structure:
+    def render(self, mode: str = "crystal") -> Structure:
         """Render the current crystal structure.
         
         Args:
