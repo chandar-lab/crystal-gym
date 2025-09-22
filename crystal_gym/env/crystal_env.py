@@ -1,48 +1,71 @@
-import os
-import gymnasium as gym
-import torch
-import pandas as pd
-import numpy as np
-import pickle
-from copy import deepcopy
-import torch
-import time
-from pymatgen.io.ase import AseAtomsAdaptor
-from crystal_gym.utils.create_graph import collate_function_crysrl
-from crystal_gym.utils import cart_to_frac_coords
-from ase.calculators.espresso import Espresso, EspressoProfile
-from pymatgen.io.vasp.inputs import Kpoints
-from pymatgen.core import Structure, Lattice
-from crystal_gym.utils.data_utils import build_crystal, build_crystal_graph
-from crystal_gym.utils.variables import (ELEMENTS_SMALL, 
-                                    ELEMENTS_MEDIUM, 
-                                    ELEMENTS_LARGE, 
-                                    SPECIES_IND_INV, 
-                                    SPECIES_IND_SMALL, 
-                                    SPECIES_IND_MEDIUM, 
-                                    SPECIES_IND_LARGE, 
-                                    SPACE_GROUP_TYPE, 
-                                    SPECIES_IND_SMALL_INV,
-                                    CUBIC_MINI)
-from dgl.traversal import bfs_nodes_generator
-import subprocess
+"""CrystalGym Environment for Reinforcement Learning-based Crystal Design.
 
-RY_CONST = 13.605691932782346
+This module provides a Gymnasium-compatible environment for training RL agents
+on crystal structure optimization tasks using DFT calculations.
+"""
+
+import os
+import pickle
+import subprocess
+import time
+import random
+from copy import deepcopy
+from typing import Dict, List, Optional, Tuple, Union, Any
+
+import gymnasium as gym
+import numpy as np
+import pandas as pd
+import torch
+from ase.calculators.espresso import Espresso, EspressoProfile
+from dgl.traversal import bfs_nodes_generator
+from pymatgen.core import Structure, Lattice, Element
+from pymatgen.io.ase import AseAtomsAdaptor
+from pymatgen.io.vasp.inputs import Kpoints
+
+from crystal_gym.utils import cart_to_frac_coords
+from crystal_gym.utils.create_graph import collate_function_crysrl
+from crystal_gym.utils.data_utils import build_crystal, build_crystal_graph
+from crystal_gym.utils.variables import (
+    ELEMENTS_SMALL,
+    ELEMENTS_MEDIUM,
+    ELEMENTS_LARGE,
+    SPECIES_IND_SMALL,
+    SPECIES_IND_MEDIUM,
+    SPECIES_IND_LARGE,
+    SPACE_GROUP_TYPE,
+    CUBIC_MINI,
+)
+
+# Physical constants
+RYDBERG_TO_EV = 13.605691932782346  # Conversion factor from Rydberg to eV
+
+# Environment constants
+DEFAULT_VOCAB_SIZES = {
+    'small': len(ELEMENTS_SMALL),
+    'medium': len(ELEMENTS_MEDIUM),
+    'large': len(ELEMENTS_LARGE)
+}
+
+# Error codes
+ERROR_CONVERGENCE = 1
+ERROR_CHARGE = 2
+ERROR_CALCULATION = 3
+
+# DFT calculation parameters for bulk modulus
+STRAIN_POINTS = 5
+VOLUME_SCALING_FACTORS = np.linspace(0.98, 1.02, 5)
+SHEAR_STRAIN_RANGE = (-0.02, 0.02)
+
+# Property-specific reward penalties for failed calculations
+REWARD_PENALTIES = {
+    'bm': -5.0,
+    'density': -1.0,
+    'bg': -1.0,
+}
 
 class CrystalGymEnv(gym.Env):
     def __init__(self, 
-                 kwargs = {
-                           'data_path':'../data/mp_20.csv',
-                           'project':'project', 
-                           'group':'group', 
-                           'exp_name':'exp_name',
-                           'seed':0,
-                           'options':{'dataset':
-                                    'mp_20',
-                                    'mode':'single',
-                                    'p_hat':1.12,
-                                    'index':0,
-                                    }}):
+                 kwargs) -> None:
         
         """
         Initialize the CrystalGymEnv class.
@@ -58,17 +81,18 @@ class CrystalGymEnv(gym.Env):
 
         # Define the action and observation space
         self.vocab = self.env_options['vocab']
-        if self.vocab == 'small':
+        if self.vocab == 'small':  # small action space: 18 elements
             self.action_space = self.single_action_space = gym.spaces.Discrete(len(ELEMENTS_SMALL))
             self.vocab_size = len(ELEMENTS_SMALL)
-        elif self.vocab == 'medium':
+        elif self.vocab == 'medium': # medium action space: 30 elements
             self.action_space = self.single_action_space = gym.spaces.Discrete(len(ELEMENTS_MEDIUM))
             self.vocab_size = len(ELEMENTS_MEDIUM)
-        elif self.vocab == 'large':
+        elif self.vocab == 'large': # large action space: 50 elements
             self.action_space = self.single_action_space = gym.spaces.Discrete(len(ELEMENTS_LARGE))
             self.vocab_size = len(ELEMENTS_LARGE)
 
-        self.observation_space =  self.single_observation_space = gym.spaces.Box(low=0, high=100, shape=(1,)) # Dummy observation space; actual space is a graph
+        # Dummy observation space; actual space is a graph
+        self.observation_space =  self.single_observation_space = gym.spaces.Box(low=0, high=100, shape=(1,)) 
 
         ## DFT Inputs
         self.qe_inputs = kwargs['qe']
@@ -81,25 +105,24 @@ class CrystalGymEnv(gym.Env):
             )
         
         self.agent = self.env_options['agent']
-        self.state, _ = self.reset(self.env_options['seed'], {})
+        self.state, _ = self.reset(self.env_options['seed'])
         self.t = 0
 
 
     def reset(self, 
-            seed = 0, 
-            options = {}):
+            seed: Optional[int] = None, 
+            options: Optional[Dict[str, Any]] = None) -> Tuple[Any, Dict[str, Any]]:
         """
         Reset the environment.
         Returns:
             state (dict): The state of the environment.
         """
+        random.seed(seed)
         info = {}
+        if options is None:
+            options = {}
         if self.env_options['mode'] == 'single':
             self.sample_ind = self.env_options['index']
-        elif self.env_options['mode'] == 'cubic-all':
-            self.sample_ind = np.random.choice(CUBIC_INDS_VAL)
-        elif self.env_options['mode'] == 'cubic-five':  
-            self.sample_ind = np.random.choice(CUBIC_VAL_FIVE)
         elif self.env_options['mode'] == 'cubic-mini':
             self.sample_ind = np.random.choice(CUBIC_MINI)
 
@@ -163,333 +186,423 @@ class CrystalGymEnv(gym.Env):
         self.state = state
         return state, info
 
-    def calculate_sm(self, atoms):
-        """
-        Calculate the shear modulus.
-        """
-
-        strains = np.linspace(-0.02, 0.02, 5) # 5 points
-
-        energies = []
-        stresses = []
-
-        for strain in strains:
-            deformed_atoms = atoms.copy()
-            cell = deformed_atoms.get_cell()
-            
-            # Apply shear strain (e.g., xy component)
-            deformation = np.eye(3)
-            deformation[0, 1] = strain
-            deformation[2, 1] = strain
-
-            cell = np.dot(cell, deformation)
-            print(cell)
-            deformed_atoms.set_cell(cell, scale_atoms=True)
-            deformed_atoms.calc = atoms.calc
-            energy = deformed_atoms.get_potential_energy()
-            stress = deformed_atoms.get_stress()
-            
-            energies.append(energy)
-            stresses.append(stress)
-        #breakpoint()
-        # Calculate shear modulus (C44 for cubic crystals)
-        # volume = atoms.get_volume()
-        breakpoint()
-        shear_stresses = [stress[3] for stress in stresses]  # xy component
+  
+    def calculate_bm(self, atoms, celldm) -> Tuple[Optional[float], int]:
+        """Calculate the bulk modulus using equation of state fitting.
         
-        slope, _ = np.polyfit(strains, shear_stresses, 1)
-        shear_modulus = slope 
-        
-        return shear_modulus
-
-    def calculate_bm(self, atoms, celldm):
-        """
-        Calculate the bulk modulus.
         Args:
-            atoms (ase.Atoms): The atoms object.
+            atoms: ASE Atoms object representing the crystal structure
+            celldm: Cell dimension parameter (unused but kept for compatibility)
+            
         Returns:
-            bm (float): The bulk modulus.
+            Tuple of (bulk_modulus, error_flag):
+                - bulk_modulus: Calculated bulk modulus in GPa, or None if failed
+                - error_flag: 0 for success, 1 for calculation error, 2 for parsing error
         """
         lengths = []
         energies = []
-        for factor in np.linspace(0.98, 1.02, 5):
+        
+        # Calculate energy-volume curve
+        for factor in VOLUME_SCALING_FACTORS:
             scaled_atoms = atoms.copy()
             scaled_atoms.set_cell(atoms.get_cell() * factor**(1/3), scale_atoms=True)
             scaled_atoms.calc = atoms.calc
-            try:
-                energy = scaled_atoms.get_potential_energy() / RY_CONST
-            except:
-                return None, 1
-            volume = scaled_atoms.get_volume()
             
-            lengths.append(volume ** (1/3))
-            energies.append(energy)
+            try:
+                energy = scaled_atoms.get_potential_energy() / RYDBERG_TO_EV
+                volume = scaled_atoms.get_volume()
+                lengths.append(volume ** (1/3))
+                energies.append(energy)
+            except Exception:
+                return None, ERROR_CALCULATION
         
-        with open(os.path.join('calculations', self.run_name, 'length_energy.dat'), 'w') as f:
+        # Write data file for EOS fitting
+        calc_dir = os.path.join('calculations', self.run_name)
+        os.makedirs(calc_dir, exist_ok=True)
+        
+        with open(os.path.join(calc_dir, 'length_energy.dat'), 'w') as f:
             for v, e in zip(lengths, energies):
                 f.write(f"{v:.6f} {e:.6f}\n")
         
+        # Write input file for ev.x
         spg_type = SPACE_GROUP_TYPE[self.space_grp]
-        with open(os.path.join('calculations', self.run_name, 'ev.in'), 'w') as f:
+        with open(os.path.join(calc_dir, 'ev.in'), 'w') as f:
             f.write("Ang\n")
             f.write(f"{spg_type}\n")  # Use 'noncubic' to treat input as volumes
             f.write("4\n")  # Murnaghan EOS
-            f.write(os.path.join('calculations', self.run_name, 'length_energy.dat') + "\n")
-            f.write(os.path.join('calculations', self.run_name, 'ev.txt') + "\n")
+            f.write(os.path.join(calc_dir, 'length_energy.dat') + "\n")
+            f.write(os.path.join(calc_dir, 'ev.txt') + "\n")
 
-        path = os.path.join('calculations', self.run_name, 'ev.in')
-        subprocess.run(f"mpirun --bind-to none -np 1 {self.qe_inputs['qe_dir']}/bin/ev.x < {path}", shell=True)
+        # Run ev.x to fit EOS
+        path = os.path.join(calc_dir, 'ev.in')
+        result = subprocess.run(
+            f"mpirun --bind-to none -np 1 {self.qe_inputs['qe_dir']}/bin/ev.x < {path}",
+            shell=True,
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode != 0:
+            return None, ERROR_CALCULATION
 
-        with open(os.path.join('calculations', self.run_name, 'ev.txt'), 'r') as f:
-            lines = f.readlines()
-            string = lines[2].split()[7]
-
-            try:
+        # Parse bulk modulus from output
+        try:
+            with open(os.path.join(calc_dir, 'ev.txt'), 'r') as f:
+                lines = f.readlines()
+                if len(lines) < 3:
+                    return None, ERROR_CALCULATION
+                    
+                string = lines[2].split()[7]
                 if 'GPa' in string:
                     bm = float(lines[2].split()[6].split('=')[1])
                 else:
                     bm = float(lines[2].split()[7])
-            except ValueError:
-                return None, 2
-
-        return bm, 0
+                return bm, 0
+        except (ValueError, IndexError):
+            return None, ERROR_CHARGE
     
-    def calculate_density(self, atoms):
-        try:
-            energy = atoms.get_potential_energy()
-        except:
-            pass
-        with open("/".join(['calculations/'+self.run_name, 'espresso.pwo']), 'r') as f:
-            lines = f.read()
-            if 'convergence NOT achieved after' in lines:
-                return None, 1
-            elif 'charge is wrong' in lines:
-                return None, 2
-            density = float(lines.split('density =')[1].split()[0])
-            return density, 0
-
-    
-    def compute_reward(self):
-        """
-        Compute the reward.
+    def calculate_band_gap(self, atoms) -> Tuple[Optional[float], int]:
+        """Calculate the band gap from DFT calculation output.
+        
+        Args:
+            atoms: ASE Atoms object (used to trigger calculation)
+            
         Returns:
-            reward (float): The reward.
+            Tuple of (band_gap, error_flag):
+                - band_gap: Calculated band gap in eV, or None if failed
+                - error_flag: 0 for success, 1 for convergence error, 2 for charge error, 3 for calculation error
+        """
+        try:
+            atoms.get_potential_energy()
+        except Exception:
+            pass  # Energy calculation may fail, but we can still read band gap
+            
+        calc_dir = os.path.join('calculations', self.run_name)
+        output_file = os.path.join(calc_dir, 'espresso.pwo')
+        
+        try:
+            with open(output_file, 'r') as f:
+                content = f.read()
+                
+            if 'convergence NOT achieved after' in content:
+                return None, ERROR_CONVERGENCE
+            elif 'charge is wrong' in content:
+                return None, ERROR_CHARGE
+            
+            # Extract band gap from output
+            tmp = content.split('highest occupied, lowest unoccupied level (ev):')[-1].split()[:2]
+            bg = float(tmp[1]) - float(tmp[0])
+            bg = max(0.0, bg)  # Ensure non-negative band gap
+            return bg, 0
+            
+        except (FileNotFoundError, ValueError, IndexError):
+            return None, ERROR_CALCULATION
+    
+    def calculate_density(self, atoms) -> Tuple[Optional[float], int]:
+        """Calculate the density from DFT calculation output.
+        
+        Args:
+            atoms: ASE Atoms object (used to trigger calculation)
+            
+        Returns:
+            Tuple of (density, error_flag):
+                - density: Calculated density in g/cm³, or None if failed
+                - error_flag: 0 for success, 1 for convergence error, 2 for charge error
+        """
+        try:
+            atoms.get_potential_energy()
+        except Exception:
+            pass  # Energy calculation may fail, but we can still read density
+            
+        calc_dir = os.path.join('calculations', self.run_name)
+        output_file = os.path.join(calc_dir, 'espresso.pwo')
+        
+        try:
+            with open(output_file, 'r') as f:
+                content = f.read()
+            density = float(content.split('density =')[1].split()[0])
+            return density, 0
+            
+        except (FileNotFoundError, ValueError, IndexError):
+            return None, ERROR_CALCULATION
+
+    
+    def compute_reward(self) -> Tuple[float, Optional[float], int, Optional[float]]:
+        """Compute the reward based on the target property.
+        
+        Returns:
+            Tuple of (reward, property_value, error_flag, simulation_time):
+                - reward: Computed reward value
+                - property_value: Calculated property value (band gap, bulk modulus, etc.)
+                - error_flag: 0 for success, >0 for various error types
+                - simulation_time: Time taken for DFT calculation in seconds
         """
         error_flag = 0
         if self.agent == "MEGNetRL":
             canonical_crystal = self.render()
         elif self.agent == "CHGNetRL":
             canonical_crystal = self.state
+        else:
+            raise ValueError(f"Unknown agent type: {self.agent}")
+            
+        # Set up DFT calculation
         atoms = AseAtomsAdaptor.get_atoms(canonical_crystal)
         nbnd = int(np.ceil(sum(atoms.get_atomic_numbers()) // 2 * 1.2))
-        self.qe_inputs.update({'nbnd':nbnd})
-        kpts = Kpoints.automatic_density(canonical_crystal, kppa = self.qe_inputs['kppa']).kpts[0]
-        # breakpoint()
+        self.qe_inputs.update({'nbnd': nbnd})
+        kpts = Kpoints.automatic_density(canonical_crystal, kppa=self.qe_inputs['kppa']).kpts[0]
         
-        atoms.calc = Espresso(profile = self.profile,
-                                pseudopotentials=self.pseudodict,
-                                input_data=self.qe_inputs, 
-                                kpts=kpts, 
-                                directory= os.path.join('calculations', self.run_name))
-        if self.env_options['property'] == 'bm':
+        calc_dir = os.path.join('calculations', self.run_name)
+        os.makedirs(calc_dir, exist_ok=True)
+        
+        # Initialize the calculator
+        atoms.calc = Espresso(
+            profile=self.profile,
+            pseudopotentials=self.pseudodict,
+            input_data=self.qe_inputs,
+            kpts=kpts,
+            directory=calc_dir
+        )
+        
+        # Calculate target property
+        property_type = self.env_options['property']
+        start_time = time.time()
+        
+        if property_type == 'bm':
             cell_dm = canonical_crystal.lattice.a
-            start_time = time.time()
             bm, error_flag = self.calculate_bm(atoms, cell_dm)
             end_time = time.time()
+            
             if error_flag == 0:
-                reward = - np.abs(self.env_options['p_hat'] - bm) / self.env_options['p_hat']
+                reward = -np.abs(self.env_options['p_hat'] - bm) / self.env_options['p_hat']
                 sim_time = end_time - start_time
-                if self.env_options['reward_min'] and reward < self.env_options['reward_min']:
+                if self.env_options.get('reward_min') and reward < self.env_options['reward_min']:
                     reward = self.env_options['reward_min']
                 return reward, bm, error_flag, sim_time
             else:
-                return -5.0, None, error_flag, None
+                return REWARD_PENALTIES['bm'], None, error_flag, None
                 
-        elif self.env_options['property'] == 'sm':
-            start_time = time.time()
-            sm = self.calculate_sm(atoms)
-            end_time = time.time()
-            reward = - np.abs(self.env_options['p_hat'] - sm) / self.env_options['p_hat']
-            sim_time = end_time - start_time
-            return reward, sm, error_flag, sim_time
         
         elif self.env_options['property'] == 'density':
             start_time = time.time()
             density, error_flag = self.calculate_density(atoms)
             end_time = time.time()
+
             if error_flag == 0:
                 reward = self.distance(self.env_options['p_hat'], torch.tensor([density]), self.env_options['p_hat']).item()
                 sim_time = end_time - start_time
                 return reward, density, error_flag, sim_time
             else:
-                return -1.0, None, error_flag, None
-        else:
-            try:
-                start_time = time.time()
-                energy = atoms.get_potential_energy()
-            except:
-                pass
-            try:
-                end_time = time.time()        
-                with open("/".join(['calculations/'+self.run_name, 'espresso.pwo']), 'r') as f:
-                    lines = f.read()
-                    if 'convergence NOT achieved after' in lines:
-                        error_flag = 1
-                        assert False
-                    elif 'charge is wrong' in lines:
-                        error_flag = 2
-                        assert False
-                    tmp = lines.split('highest occupied, lowest unoccupied level (ev):')[-1].split()[:2]
-                    bg = float(tmp[1]) - float(tmp[0])
-                    if bg < 0.0:
-                        bg = 0.0
-                    reward = self.distance(self.env_options['p_hat'], torch.tensor([bg])).item()
-                    # print('DFT Success!')
-                    sim_time = end_time - start_time
-                    return reward, bg, error_flag, sim_time
-            except:
-                if error_flag == 0:
-                    error_flag = 3
-                reward = -1.0
-
-            return reward, None, error_flag, None
+                return REWARD_PENALTIES['density'], None, error_flag, None
+        
+        else:  # Default to band gap calculation
+            bg, error_flag = self.calculate_band_gap(atoms)
+            end_time = time.time()
+            
+            if error_flag == 0:
+                reward = self.distance(self.env_options['p_hat'], torch.tensor([bg])).item()
+                sim_time = end_time - start_time
+                return reward, bg, error_flag, sim_time
+            else:
+                return REWARD_PENALTIES['bg'], None, error_flag, None
+            
     
-    def distance(self, target, predicted, beta = 1.0):
+    def distance(self, target: float, predicted: torch.Tensor, beta: float = 1.0) -> torch.Tensor:
         """
-        Compute the distance between two vectors.
+        Compute the exponential distance between two vectors.
         Args:
-            x (torch.Tensor): The first vector.
-            y (torch.Tensor): The second vector.
+            target: Target value
+            predicted: Predicted value(s) as tensor
+            beta: Scaling parameter for the exponential
+            
         Returns:
-            distance (float): The distance between the two vectors.
+            torch.Tensor: Exponential distance value
         """
         try:
-            d = torch.exp(-(target - predicted)**2 / beta)[0]
-        except:
-            d = torch.exp(-(target - predicted)**2 / beta)#[0]
-        return d
+            return torch.exp(-(target - predicted)**2 / beta)[0]
+        except IndexError:
+            return torch.exp(-(target - predicted)**2 / beta)
 
-    def step(self, action):
+    def step(self, action: int) -> Tuple[Any, float, bool, bool, Dict[str, Any]]:
         """
         Take a step in the environment.
         Args:
-            action (int): The action to take.
+            action: Index of the atomic species to substitute (0 to vocab_size-1)
+            
         Returns:
-            state (dict): The state of the environment.
-            reward (float): The reward.
-            terminated (bool): Whether the episode is terminated.
-            truncated (bool): Whether the episode is truncated.
-            info (dict): Additional information
+            Tuple containing:
+                - state: Updated crystal graph or structure
+                - reward: Reward value (0 during episode, computed at end)
+                - terminated: Whether the episode is terminated
+                - truncated: Whether the episode is truncated
+                - info: Additional information dictionary
         """
-        info = {}  
+        info = {}
         index_curr_focus = self.traversal[self.t]
+        
+        # Completion/Substitution based on agent type
         if self.agent == "MEGNetRL":
             atomic_number = deepcopy(self.state.ndata['atomic_number'])
             atomic_number[index_curr_focus] = torch.tensor(action)
             next_observations = deepcopy(self.state)
             next_observations.ndata['atomic_number'] = atomic_number
-            self.state = deepcopy(next_observations)
-            self.t += 1
+            if self.t+1 < self.n_sites:
+                next_observations.focus = torch.tensor([self.traversal[self.t+1]], device='cuda')
+            else:
+                next_observations.focus = torch.tensor([20], device='cuda')  # dummy focus (assuming there are no more than 20 atoms)
+            self.state = next_observations
             
         elif self.agent == "CHGNetRL":
             next_observations = deepcopy(self.state)
-            if self.vocab == 'small':
-                new_element = Element.from_Z(SPECIES_IND_SMALL[action.item()])
-            elif self.vocab == 'medium':
-                new_element = Element.from_Z(SPECIES_IND_MEDIUM[action.item()])
-            elif self.vocab == 'large':
-                new_element = Element.from_Z(SPECIES_IND_LARGE[action.item()])
+            species_mapping = {
+                'small': SPECIES_IND_SMALL,
+                'medium': SPECIES_IND_MEDIUM,
+                'large': SPECIES_IND_LARGE
+            }
+            new_element = Element.from_Z(species_mapping[self.vocab][action.item()])
             next_observations.replace(index_curr_focus, new_element)
-            self.state = deepcopy(next_observations)
-            self.t += 1
+            self.state = next_observations
+        else:
+            raise ValueError(f"Unknown agent type: {self.agent}")
+            
+        self.t += 1
 
+        # Check if episode is complete
         if self.t == self.n_sites:
             terminated = truncated = True
-            # self.t = 0
-            reward, bg, error_flag, sim_time = self.compute_reward()
-            info['final_info'] = [{'episode':{'r':reward}}]
-            info['final_info'][0]['episode']['error_flag'] = error_flag
-            if bg is not None:
-                info['final_info'][0]['episode']['bg'] = bg
-                info['final_info'][0]['episode']['sim_time'] = sim_time
+            reward, property_value, error_flag, sim_time = self.compute_reward()
+            
+            info['final_info'] = [{
+                'episode': {
+                    'r': reward,
+                    'error_flag': error_flag
+                }
+            }]
+            
+            if property_value is not None:
+                info['final_info'][0]['episode'][self.env_options['property']] = property_value
+                if sim_time is not None:
+                    info['final_info'][0]['episode']['sim_time'] = sim_time
         else:
             terminated = truncated = False
             reward = 0.0
 
         return self.state, reward, terminated, truncated, info
     
-    def graph_to_dict_complete(self, observations):
-        """
-        Convert the graph to a dictionary.
+    def graph_to_dict_complete(self, observations) -> Dict[str, np.ndarray]:
+        """Convert the graph to a complete dictionary representation.
+        
+        Args:
+            observations: Graph observations containing atomic data
+            
+        Returns:
+            Dictionary containing:
+                - frac_coords: Fractional coordinates of atoms
+                - atom_types: Atomic numbers
+                - lengths: Lattice lengths
+                - angles: Lattice angles
+                - num_atoms: Number of atoms
         """
         atomic_number = deepcopy(observations.ndata['atomic_number'])
         position = deepcopy(observations.ndata['position'])
         lengths = deepcopy(observations.lengths_angles_focus.cpu()[0][:3])
         angles = deepcopy(observations.lengths_angles_focus.cpu()[0][3:6])
         num_atoms = atomic_number.shape[0]
-        frac_coords = cart_to_frac_coords(position.to(dtype=torch.float32).cpu(), lengths.unsqueeze(0), angles.unsqueeze(0), num_atoms)
-        state_dict = {
-                      'frac_coords':np.array(frac_coords), 
-                      'atom_types':np.array(atomic_number.cpu()), 
-                      'lengths':np.array(lengths), 
-                      'angles':np.array(angles), 
-                      'num_atoms':num_atoms
-                      }
-        return state_dict
+        
+        frac_coords = cart_to_frac_coords(
+            position.to(dtype=torch.float32).cpu(),
+            lengths.unsqueeze(0),
+            angles.unsqueeze(0),
+            num_atoms
+        )
+        
+        return {
+            'frac_coords': np.array(frac_coords),
+            'atom_types': np.array(atomic_number.cpu()),
+            'lengths': np.array(lengths),
+            'angles': np.array(angles),
+            'num_atoms': num_atoms
+        }
     
-    def graph_to_dict(self, observation):
-        """
-        Convert the graph to a dictionary for the RL replay buffer
+    def graph_to_dict(self, observation) -> Dict[str, torch.Tensor]:
+        """Convert the graph to a dictionary for the RL replay buffer.
+        
+        Args:
+            observation: Graph observation containing atomic and edge data
+            
+        Returns:
+            Dictionary containing graph components for replay buffer storage
         """
         state = {}
-        focus = observation.focus.to(device = 'cuda')
-        if focus.item() == -10000:
-            focus = torch.tensor([20])
-        state['atomic_number'] = torch.cat([observation.ndata['atomic_number'].to(device = 'cuda'), focus])
+        focus = observation.focus.to(device='cuda')
+            
+        state['atomic_number'] = torch.cat([
+            observation.ndata['atomic_number'].to(device='cuda'),
+            focus
+        ])
         state['coordinates'] = observation.ndata['position']
         state['edges'] = observation.edges()
         state['efeat'] = observation.edata['e_feat']
         state['etype'] = observation.edata['etype'].squeeze()
         state['laf'] = observation.lengths_angles_focus.squeeze()
-        # state['index'] = observation.inds
+        
         return state
     
-    def to_struct(self,state_dict):
-        """
-        Convert the dictionary to a pymatgen Structure.
+    def to_struct(self, state_dict: Dict[str, np.ndarray]) -> Structure:
+        """Convert the dictionary to a pymatgen Structure.
+        
+        Args:
+            state_dict: Dictionary containing crystal structure data
+            
+        Returns:
+            pymatgen Structure object
         """
         lengths = state_dict['lengths'].tolist()
         angles = state_dict['angles'].tolist()
         lattice_params = lengths + angles
         atomic_number = state_dict['atom_types']
-        if self.vocab == 'small':
-            atom_types = [SPECIES_IND_SMALL[int(atomic_number[j])] for j in range(atomic_number.shape[0])]
-        elif self.vocab == 'medium':
-            atom_types = [SPECIES_IND_MEDIUM[int(atomic_number[j])] for j in range(atomic_number.shape[0])]
-        elif self.vocab == 'large':
-            atom_types = [SPECIES_IND_LARGE[int(atomic_number[j])] for j in range(atomic_number.shape[0])]      
+        
+        species_mapping = {
+            'small': SPECIES_IND_SMALL,
+            'medium': SPECIES_IND_MEDIUM,
+            'large': SPECIES_IND_LARGE
+        }
+        
+        atom_types = [
+            species_mapping[self.vocab][int(atomic_number[j])]
+            for j in range(atomic_number.shape[0])
+        ]
+        
         coords = state_dict['frac_coords']
-        canonical_crystal = Structure(lattice = Lattice.from_parameters(*lattice_params),
-                                    species = atom_types, coords = coords)
-        return canonical_crystal
+        return Structure(
+            lattice=Lattice.from_parameters(*lattice_params),
+            species=atom_types,
+            coords=coords
+        )
 
-    def render(self, mode="human"):
-        """
-        Render the environment.
+    def render(self, mode: str = "human") -> Structure:
+        """Render the current crystal structure.
+        
+        Args:
+            mode: Rendering mode (currently only "human" supported)
+            
+        Returns:
+            pymatgen Structure object representing the current crystal
         """
         crystal_dict = self.graph_to_dict_complete(self.state)
-        canonical_crystal = self.to_struct(crystal_dict)
-        return canonical_crystal
+        return self.to_struct(crystal_dict)
     
-    def get_obs(self):
-        """
-        Get the observation.
+    def get_obs(self) -> Any:
+        """Get the current observation.
+        
+        Returns:
+            Current state (graph or structure depending on agent type)
         """
         return self.state
     
-    def close(self):
-        """
-        Close the environment.
+    def close(self) -> None:
+        """Close the environment and clean up resources.
+        
+        Currently resets the environment to initial state.
         """
         self.reset()
     
