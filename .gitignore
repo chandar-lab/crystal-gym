@@ -7,4 +7,5 @@ runs
 calculations
 SSSP
 __pycache__
+CRASH
 *.tar.gz

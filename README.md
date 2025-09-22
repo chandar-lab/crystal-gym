@@ -135,7 +135,7 @@ Test your QE installation using the provided sample files:
 cd crystal_gym/samples
 
 # Update the pseudopotential directory path in the input file
-# Edit espresso_<id>.pwi and change pseudo_dir to your SSSP folder path
+# Edit espresso_<id>.pwi and change pseudo_dir to your absolute files/SSSP folder path 
 
 # Run a test calculation
 mpirun --bind-to none -np 1 /path/to/qe-7.3.1/bin/pw.x \
@@ -160,7 +160,7 @@ module load nvhpc/23.7
 export OMP_NUM_THREADS=2
 ```
 
-Next, modify the appropriate paths in `config/qe/qe.yaml` (QE, SSSP, and pseudodict.pkl) and `config/env/env.yaml` (data). 
+Next, modify the appropriate paths in `config/qe/qe.yaml` (QE, SSSP, and pseudodict.pkl) and `config/env/env.yaml` (data). Alternatively, you can pass them as arguments. 
 
 The CrystalGym environment is defined in `crystal_gym/env/crystal_env.py`. Here's how to get started:
 
@@ -196,7 +196,6 @@ while not terminated and not truncated:
     state, reward, terminated, truncated, info = env.step(action)
 
 # Print outputs
-
 error_flag = info["error_flag"]
 
 if error_flag:
@@ -222,46 +221,62 @@ For detailed configuration options, refer to the YAML files in `crystal_gym/conf
 #### Bulk Modulus Optimization
 ```bash
 python dqn.py exp.exp_name="bm-single" \
-              env.index=3403 \
-              env.property="bm" \
-              env.p_hat=300.0 \
-              qe.occupations="smearing" \
-              qe.calculation="scf" \
-              env.mode="single"
+            env.index=3403 \
+            env.property="bm" \
+            env.p_hat=300.0 \
+            qe.occupations="smearing" \
+            qe.calculation="scf" \
+            env.mode="single" \
+            env.data_path="../data/mp_20/val.csv" \
+            qe.pseudo_dir="absolute/path/to/files/SSSP" \
+            qe.pseudodict="../files/pseudodict.pkl"\
+            qe.qe_dir="path/to/qe-7.3.1"
 ```
 
 #### Density Optimization
 ```bash
 python dqn.py exp.exp_name="density-single" \
-              env.index=3403 \
-              env.property="density" \
-              env.p_hat=3.0 \
-              qe.occupations="smearing" \
-              qe.calculation="vc-relax" \
-              env.mode="single"
+            env.index=3403 \
+            env.property="density" \
+            env.p_hat=3.0 \
+            qe.occupations="smearing" \
+            qe.calculation="vc-relax" \
+            env.mode="single" \
+            env.data_path="../data/mp_20/val.csv" \
+            qe.pseudo_dir="absolute/path/to/files/SSSP" \
+            qe.pseudodict="../files/pseudodict.pkl"\
+            qe.qe_dir="path/to/qe-7.3.1"
 ```
 
 #### Band Gap Optimization
 ```bash
 python dqn.py exp.exp_name="band_gap-single" \
-              env.index=3403 \
-              env.property="band_gap" \
-              env.p_hat=1.12 \
-              qe.occupations="fixed" \
-              qe.calculation="scf" \
-              env.mode="single"
+            env.index=3403 \
+            env.property="band_gap" \
+            env.p_hat=1.12 \
+            qe.occupations="fixed" \
+            qe.calculation="scf" \
+            env.mode="single" \
+            env.data_path="../data/mp_20/val.csv" \
+            qe.pseudo_dir="absolute/path/to/files/SSSP" \
+            qe.pseudodict="../files/pseudodict.pkl"\
+            qe.qe_dir="path/to/qe-7.3.1"
 ```
 
 ### Mixed Crystal Optimization
 
 ```bash
 python dqn.py exp.exp_name="density-mixed" \
-              env.index="blank" \
-              env.property="density" \
-              env.p_hat=3.0 \
-              qe.occupations="smearing" \
-              qe.calculation="vc-relax" \
-              env.mode="cubic_mini"
+            env.index="blank" \
+            env.property="density" \
+            env.p_hat=3.0 \
+            qe.occupations="smearing" \
+            qe.calculation="vc-relax" \
+            env.mode="cubic_mini" \
+            env.data_path="../data/mp_20/val.csv" \
+            qe.pseudo_dir="absolute/path/to/files/SSSP" \
+            qe.pseudodict="../files/pseudodict.pkl"\
+            qe.qe_dir="path/to/qe-7.3.1"
 ```
 
 ### Algorithm-Specific Training
