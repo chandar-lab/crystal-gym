@@ -88,11 +88,8 @@ class QNetwork(nn.Module):
                 nn.Linear(84, env.single_action_space.n),
             )
         elif network_type == "MEGNetRL":
-            # MEGNetRL architecture for crystal structures
-            self.qnet = MEGNetRL(
-                num_actions=env.single_action_space.n,
-                ntypes_state=env.single_action_space.n
-            )
+            self.qnet = MEGNetRL(num_actions = env.single_action_space.n,
+                                 ntypes_state =  20)
         else:
             raise ValueError(f"Unsupported network type: {network_type}")
 
@@ -171,7 +168,7 @@ def main(args: DictConfig) -> None:
     rb = ReplayBuffer(
         storage=ListStorage(max_size=args.algo.buffer_size),
         batch_size=args.algo.batch_size,
-        collate_fn=partial(collate_function, p_hat=args.env.p_hat),
+        collate_fn=partial(collate_function, p_hat=args.env.p_hat, agent = args.algo.agent),
         pin_memory=True,
         prefetch=16,
     )

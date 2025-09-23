@@ -31,6 +31,9 @@ from crystal_gym.agents import MEGNetRL
 from crystal_gym.env import CrystalGymEnv
 from crystal_gym.utils import collate_function
 
+# Constants
+MAX_ATOMS = 20
+
 # Global signal handler for graceful shutdown
 caught_signal = False
 
@@ -122,7 +125,7 @@ class SoftQNetwork(nn.Module):
             # MEGNetRL architecture for crystal structures
             self.qnet = MEGNetRL(
                 num_actions=envs.single_action_space.n,
-                ntypes_state=envs.single_action_space.n
+                ntypes_state=MAX_ATOMS
             )
         else:
             raise ValueError(f"Unsupported network type: {network_type}")
