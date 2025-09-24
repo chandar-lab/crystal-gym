@@ -30,12 +30,12 @@ CrystalGym is a comprehensive reinforcement learning environment designed for ma
 
 ## ✨ Features
 
-- 🏗️ **Gymnasium-compatible environment** for RL training
-- ⚛️ **DFT-based rewards** using Quantum Espresso
-- 🧪 **Multiple crystal optimization modes** (single, mixed)
-- 📊 **Various material properties** (bulk modulus, density, band gap)
-- 🔧 **Easy configuration** via YAML files
-- 🚀 **Multiple RL algorithms** (DQN, PPO, SAC, Rainbow)
+- **Gymnasium-compatible RL environment** for generating crystals
+- **DFT-based rewards** using Quantum Espresso
+- **Three properties** (bulk modulus, density, band gap)
+- **Four RL algorithms** (DQN, PPO, SAC, Rainbow)
+- **Single and mixed crystal optimization** 
+- **Easy configuration** via YAML files
 
 ## 🚀 Installation
 
@@ -317,6 +317,6 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 **CrystalGym** - Accelerating materials discovery through reinforcement learning
 
-[Report Bug](https://github.com/chandar-lab/crystal-gym/issues) • [Request Feature](https://github.com/chandar-lab/crystal-gym/issues) • [Documentation](https://github.com/chandar-lab/crystal-gym/wiki)
+[Report Bug](https://github.com/chandar-lab/crystal-gym/issues) • [Request Feature](https://github.com/chandar-lab/crystal-gym/issues)
 
 </div>
