@@ -299,7 +299,7 @@ def main(args: DictConfig) -> None:
     rb = ReplayBuffer(
         storage=ListStorage(max_size=args.algo.buffer_size),
         batch_size=args.algo.batch_size,
-        collate_fn=partial(collate_function, p_hat=args.env.p_hat),
+        collate_fn=partial(collate_function, agent=args.algo.agent),
         pin_memory=True,
         prefetch=16,
     )

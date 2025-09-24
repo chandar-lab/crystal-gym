@@ -23,7 +23,8 @@ from pymatgen.io.ase import AseAtomsAdaptor
 from pymatgen.io.vasp.inputs import Kpoints
 
 from crystal_gym.utils import cart_to_frac_coords
-from crystal_gym.utils.create_graph import collate_function_crysrl
+from crystal_gym.utils import get_device
+from crystal_gym.utils import create_graph
 from crystal_gym.utils.data_utils import build_crystal, build_crystal_graph
 from crystal_gym.utils.variables import (
     ELEMENTS_SMALL,
@@ -76,6 +77,7 @@ class CrystalGymEnv(gym.Env):
         super(CrystalGymEnv, self).__init__()
         self.env_options = kwargs['env']
         self.run_name = kwargs['env']['run_name']
+        
         ## Load the data
         self.data = pd.read_csv(self.env_options['data_path'])
 
@@ -155,7 +157,7 @@ class CrystalGymEnv(gym.Env):
     
         graph.focus = self.traversal[self.t]
         graph.focus_list = self.traversal
-        state = collate_function_crysrl(graph, p_hat = self.env_options['p_hat'])
+        state = create_graph(graph, p_hat = self.env_options['p_hat'])
 
         lengths = torch.tensor(canonical_crystal.lattice.abc)
         angles = torch.tensor(canonical_crystal.lattice.angles)
@@ -440,14 +442,15 @@ class CrystalGymEnv(gym.Env):
         
         # Completion/Substitution based on agent type
         if self.agent == "MEGNetRL":
+            device = get_device()
             atomic_number = deepcopy(self.state.ndata['atomic_number'])
             atomic_number[index_curr_focus] = torch.tensor(action)
             next_observations = deepcopy(self.state)
             next_observations.ndata['atomic_number'] = atomic_number
             if self.t+1 < self.n_sites:
-                next_observations.focus = torch.tensor([self.traversal[self.t+1]], device='cuda')
+                next_observations.focus = torch.tensor([self.traversal[self.t+1]], device=device)
             else:
-                next_observations.focus = torch.tensor([20], device='cuda')  # dummy focus (assuming there are no more than 20 atoms)
+                next_observations.focus = torch.tensor([20], device=device)  # dummy focus (assuming there are no more than 20 atoms)
             self.state = next_observations
             
         elif self.agent == "CHGNetRL":
@@ -531,11 +534,12 @@ class CrystalGymEnv(gym.Env):
         Returns:
             Dictionary containing graph components for replay buffer storage
         """
+        device = get_device()
         state = {}
-        focus = observation.focus.to(device='cuda')
+        focus = observation.focus.to(device=device)
             
         state['atomic_number'] = torch.cat([
-            observation.ndata['atomic_number'].to(device='cuda'),
+            observation.ndata['atomic_number'].to(device=device),
             focus
         ])
         state['coordinates'] = observation.ndata['position']

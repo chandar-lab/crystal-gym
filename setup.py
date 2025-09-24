@@ -21,7 +21,19 @@ setuptools.setup(
     python_requires=">=3.9",
     install_requires=[
         "numpy",
-        "torch",
+        "torch>=2.0.0",
+        "gymnasium>=0.28.0",
+        "pymatgen>=2025.1.0",
+        "ase>=3.23.0",
+        "dgl>=2.4.0",
+        "matgl>=0.9.0",
+        "chgnet>=0.3.8",
+        "hydra-core>=1.3.0",
+        "wandb>=0.17.0",
+        "torchrl>=0.8.0",
+        "tensorboard>=2.18.0",
+        "pyyaml",
+        "h5py",
     ],
     packages=['crystal_gym']
 )

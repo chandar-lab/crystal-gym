@@ -228,26 +228,13 @@ def main(args: DictConfig) -> None:
     target_network.load_state_dict(q_network.state_dict())
 
     # Initialize replay buffer
-    if args.algo.replay_type == "uniform":
-        rb = ReplayBuffer(
-            storage=ListStorage(max_size=args.algo.buffer_size),
-            batch_size=args.algo.batch_size,
-            collate_fn=partial(collate_function, p_hat=args.env.p_hat, agent=args.algo.agent),
-            pin_memory=True,
-            prefetch=16,
-        )
-    elif args.algo.replay_type == "prioritized":
-        rb = PrioritizedReplayBuffer(
-            alpha=0.6,
-            beta=0.4,
-            storage=ListStorage(max_size=args.algo.buffer_size),
-            batch_size=args.algo.batch_size,
-            collate_fn=partial(collate_function, p_hat=args.env.p_hat, agent=args.algo.agent),
-            pin_memory=True,
-            prefetch=16,
-        )
-    else:
-        raise ValueError(f"Unsupported replay type: {args.algo.replay_type}")
+    rb = ReplayBuffer(
+        storage=ListStorage(max_size=args.algo.buffer_size),
+        batch_size=args.algo.batch_size,
+        collate_fn=partial(collate_function, agent=args.algo.agent),
+        pin_memory=True,
+        prefetch=16,
+    )
 
     # Multi-step learning queues
     state_deque = deque(maxlen=args.algo.multi_step)
