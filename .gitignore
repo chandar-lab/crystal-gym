@@ -9,3 +9,4 @@ SSSP
 __pycache__
 CRASH
 *.tar.gz
+*.egg-info
