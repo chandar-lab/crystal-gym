@@ -370,7 +370,7 @@ class CrystalGymEnv(gym.Env):
         
         if property_type == 'bm':
             cell_dm = canonical_crystal.lattice.a
-            bm, error_flag = self.calculate_bm(atoms, cell_dm)
+            bm, error_flag = self.calculate_bm(atoms)
             end_time = time.time()
             
             if error_flag == 0:
