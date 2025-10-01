@@ -1,0 +1,35 @@
+defaults:
+  - qe: qe.yaml
+  - env: env.yaml
+
+exp:
+  exp_name: sac # the name of this experiment
+  seed: 1 # seed of the experiment
+  torch_deterministic: True # if toggled, `torch.backends.cudnn.deterministic=False`
+  cuda: True #if toggled, cuda will be enabled by default
+  track: True #if toggled, this experiment will be tracked with Weights and Biases
+  capture_video: False
+  save_freq: 100 # the frequency of saving the model
+
+wandb:
+  mode: online
+  wandb_project_name: SAC # the wandb's project name
+  wandb_group: SAC-DEFAULT # the entity (team) of wandb's project
+  capture_video: False # whether to capture videos of the agent performances (check out `videos` folder)
+
+algo:
+  env_id: CrystalGymEnv-v0 # the id of the environment#
+  agent: MEGNetRL # the agent (policy network) to use
+  total_timesteps: 500000 # total timesteps of the experiments#
+  buffer_size: 2000 # the size of the replay buffer # test 2000 and 15000
+  gamma: 0.99
+  tau: 1.0 #target smoothing coefficient (default: 1)
+  batch_size: 64
+  learning_starts: 1000 # timestep to start learning
+  policy_lr: 3e-4
+  q_lr: 3e-4
+  update_frequency: 4 # the frequency of training updates
+  target_network_frequency: 500 # test 500, 100
+  alpha: 0.2 # Entropy regularization coefficient.
+  autotune: False # automatic tuning of the entropy coefficient
+  target_entropy_scale: 0.89 # coefficient for scaling the autotune entropy target

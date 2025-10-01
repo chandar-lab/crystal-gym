@@ -1,0 +1,12 @@
+models
+outputs
+output
+error
+wandb
+runs
+calculations
+SSSP
+__pycache__
+CRASH
+*.tar.gz
+*.egg-info
